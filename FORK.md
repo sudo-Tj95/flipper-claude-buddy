@@ -88,6 +88,15 @@ To use a different key, set the `vscodeFocusHotkey` plugin option (or
 `FLIPPER_VSCODE_FOCUS_HOTKEY`) to match. Single characters and `F1`–`F20` are
 supported; `F19` is a good choice if you have it, since nothing else claims it.
 
+### Dictation focuses first
+
+Upstream's voice handler calls the dictation backend directly, without the focus
+step every other input path performs. macOS dictation inserts at the caret, so
+the transcript landed wherever focus already was — you had to click the Claude
+input by hand before pressing UP. The bridge now focuses the target first
+(`InputBackend.focus()`, called before `dictation.start()`), so UP works without
+touching the mouse. This is not a macOS limitation; it was a missing step.
+
 ### What works where
 
 | Feature | Terminal | VS Code extension |

@@ -124,6 +124,13 @@ class Daemon:
                     )
                     log.info("Dictation stopped")
                 else:
+                    # Focus first. macOS dictation inserts at the caret, and the
+                    # dictation backend triggers the OS via the frontmost app's
+                    # Edit menu rather than through our send_* path — so without
+                    # this the transcript lands wherever the caret happened to
+                    # be (an editor pane, another app) instead of the Claude
+                    # input, and the user has to click the box by hand.
+                    await self._input.focus()
                     await self._dictation.start()
                     self._dictating = True
                     # Button already played sound+vibro locally; just start LED blink

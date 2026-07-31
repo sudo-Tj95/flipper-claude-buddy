@@ -35,6 +35,15 @@ class InputBackend(ABC):
     def set_target(self, target: dict[str, str] | None) -> None:
         """Optionally bind future input to a specific runner session."""
 
+    async def focus(self) -> None:
+        """Place the caret in the target input without typing anything.
+
+        Every send_* method focuses as part of its own script. Dictation is the
+        exception: it is started by the OS rather than by us, and inserts text
+        wherever the caret already happens to be — so it needs focusing as a
+        separate step first. Default is a no-op for backends that cannot focus.
+        """
+
     @abstractmethod
     async def send_ctrl_c(self) -> None:
         """Send Ctrl+C to the current runner target."""
@@ -389,6 +398,11 @@ class AppleScriptInputBackend(InputBackend):
             self._target.describe() if self._target else "frontmost application",
         )
 
+    async def focus(self) -> None:
+        script = _focus_script(self._target)
+        if script:
+            await _run_applescript(script, "focus")
+
     async def send_ctrl_c(self) -> None:
         # In the VS Code extension the target is a webview, not a TUI: Ctrl+C
         # is inert there (macOS copy is Cmd+C, and there is no SIGINT to send).
@@ -568,6 +582,9 @@ class XdotoolInputBackend(InputBackend):
                     [*self._window_args(), "key", "--clearmodifiers", combo],
                     "focus_hotkey",
                 )
+
+    async def focus(self) -> None:
+        await self._focus()
 
     async def send_ctrl_c(self) -> None:
         await self._focus()
