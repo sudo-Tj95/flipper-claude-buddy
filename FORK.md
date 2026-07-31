@@ -114,6 +114,35 @@ Clean up temp files: rm -rf /important/data
 
 which is precisely the case a friendly description would otherwise hide.
 
+#### Questions reach the device too
+
+`AskUserQuestion` — what Claude uses to ask you something mid-task — goes
+through the same `PermissionRequest` hook as any tool. Upstream's
+`extract_detail()` has no branch for it, so it arrived as a bare
+`AskUserQuestion` with an **empty** detail line: indistinguishable from nothing
+happening, while the session sat blocked waiting for an answer nobody knew was
+needed. Now:
+
+```
+single   |Where does your Claud|   4 questions: Transport, Timeout,
+         |e Code view live in V|                Retries, Logging
+         |S Code, and how many |
+```
+
+One question shows its text; several show the count and their headers, which
+identify them in a fraction of the space. A malformed payload still says
+`Waiting for your answer` rather than rendering blank.
+
+Prose is trimmed on a word boundary (`_fit_words()`), unlike paths and commands,
+where a hard cut is honest and there may be no spaces to break on.
+
+**ALLOW does not answer the question** — it only lets Claude ask it, so the
+answer still has to be given at the laptop. This is a "go and look"
+notification, which is the useful part when the alternative is silence. Letting
+the Flipper actually answer would need the hook to return the choice and a
+new option-picker view in the firmware; the `updatedInput` hook output field
+looks like the lead worth pulling, but it is unverified.
+
 ## 2. VS Code extension support
 
 Upstream targets a terminal. It finds the window to type into via `TERM_PROGRAM`,

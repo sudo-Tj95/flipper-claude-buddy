@@ -88,6 +88,24 @@ def _fit(text: str) -> str:
     return text.encode("ascii", "ignore")[:DETAIL_MAX].decode("ascii")
 
 
+def _fit_words(text: str) -> str:
+    """Like _fit(), but never cuts a word in half.
+
+    Prose is read, not pattern-matched, so half a trailing word is 63-byte
+    budget spent on nothing. Paths and commands still use _fit(): a hard cut is
+    honest there, and there may be no spaces to break on anyway.
+    """
+    text = " ".join(str(text).split())
+    text = "".join(c for c in text if 0x20 <= ord(c) < 0x7F)
+    raw = text.encode("ascii", "ignore")
+    if len(raw) <= DETAIL_MAX:
+        return raw.decode("ascii")
+    cut = raw[:DETAIL_MAX]
+    if b" " in cut:  # a single unbroken run has no boundary to find
+        cut = cut[: cut.rfind(b" ")]
+    return cut.decode("ascii").rstrip(" ,")
+
+
 def extract_detail(tool_name: str, tool_input: dict) -> str:
     """Extract a detail string from the tool input, for display on the Flipper.
 
@@ -133,6 +151,28 @@ def extract_detail(tool_name: str, tool_input: dict) -> str:
         return _fit(val)
     if tool_name == "Agent":
         return _fit(tool_input.get("description", ""))
+    if tool_name == "AskUserQuestion":
+        # Claude is blocked on an answer that can only be given at the laptop —
+        # ALLOW here merely lets the question be asked, it does not answer it.
+        # So this prompt's job is "go and look", with enough context to know
+        # what about. Upstream had no branch, so it rendered as a blank line
+        # and was indistinguishable from nothing happening.
+        questions = [q for q in (tool_input.get("questions") or []) if isinstance(q, dict)]
+        headers = [str(q.get("header", "")).strip() for q in questions]
+        headers = [h for h in headers if h]
+        if len(questions) > 1:
+            # Headers identify each question in a fraction of the space the
+            # questions themselves would take.
+            if headers:
+                return _fit_words("%d questions: %s" % (len(questions), ", ".join(headers)))
+            return _fit("%d questions - see Claude" % len(questions))
+        if questions:
+            first = str(questions[0].get("question", "")).strip()
+            if first:
+                return _fit_words(first)
+            if headers:
+                return _fit_words(headers[0])
+        return _fit("Waiting for your answer")
     return ""
 
 
