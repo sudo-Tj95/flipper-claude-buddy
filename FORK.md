@@ -355,8 +355,23 @@ Detecting this is fiddlier than it looks:
 
 Attempting a write is the only thing that separates them. So while an action is
 pending, `ClaudeIPC` writes a keepalive every `HOOK_KEEPALIVE_INTERVAL` (5s); a
-`BrokenPipeError` cancels the action, which unwinds the daemon's `finally`
-blocks, releases the lock and promotes the next queued prompt.
+write failure cancels the action, which unwinds the daemon's `finally` blocks,
+releases the lock and promotes the next queued prompt. The probe above produced
+`BrokenPipeError`, but asyncio's buffered writes surface the same condition as
+`ConnectionResetError` in practice — both are caught, along with `OSError`.
+
+This is the *fallback* path. When you answer in the desktop dialog, Claude Code
+sends an explicit `dismiss` action and promotion is immediate:
+
+```
+15:20:11,546  Permission request: Bash Allow this one on the Flipper   (queued)
+15:20:19,409  Dismissing pending permission (deferring to Claude)
+15:20:19,409  Waiting for Flipper response (60s timeout, 0 queued)     (promoted)
+```
+
+That handler predates this fork but was inert — without a queue there was
+nothing to promote. Keepalives cover the case with no dismiss at all: an
+interrupted turn, or a hook killed outright.
 
 The keepalive is a bare newline, and responses are newline-delimited JSON, so it
 is an empty record. Hooks skip blank lines when reading
