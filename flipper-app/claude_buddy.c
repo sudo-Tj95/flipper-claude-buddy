@@ -461,9 +461,13 @@ static void process_message(App* app, ProtocolMessage* msg) {
         } else {
             notify_play(app->notifications, SoundPerm, LedStateOff);
         }
-        /* Desktop wire protocol has no "always" decision — hide the
-         * toggle there. Bridge keeps it. */
-        ui_show_permission(app->ui, msg->text, msg->text2, /*allow_always*/ !desktop);
+        /* Fork change: the "always allow" toggle is hidden in BOTH modes.
+         * Desktop's wire protocol never had it; for the bridge we removed it
+         * because granting a standing permission rule from 21 characters of
+         * truncated tool detail is not an informed decision. The host bridge
+         * also downgrades any incoming always=true to a one-time allow, so a
+         * stock .fap flashed against this fork stays safe too. */
+        ui_show_permission(app->ui, msg->text, msg->text2, /*allow_always*/ false);
         break;
     }
 

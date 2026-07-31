@@ -150,12 +150,15 @@ class Daemon:
 
         elif msg_type == "perm_resp":
             allowed = data.get("allow", False)
-            always = data.get("always", False)
+            # ALWAYS is downgraded to a one-time ALLOW in this fork: a 21-char
+            # tool detail on a 128x64 screen is not enough context to grant a
+            # standing permission rule. See on-permission-request.py.
+            always_requested = data.get("always", False)
             esc = data.get("esc", False)
-            log.info("Flipper perm_resp: allow=%s always=%s esc=%s future=%s",
-                     allowed, always, esc, self._perm_future is not None)
+            log.info("Flipper perm_resp: allow=%s always=%s (ignored) esc=%s future=%s",
+                     allowed, always_requested, esc, self._perm_future is not None)
             if self._perm_future and not self._perm_future.done():
-                self._perm_future.set_result({"allow": allowed, "always": always})
+                self._perm_future.set_result({"allow": allowed, "always": False})
             if esc:
                 await self._send_keystroke("escape")
 
@@ -547,6 +550,11 @@ class Daemon:
             "term_session_id": str(request.get("term_session_id", "")).strip(),
             "iterm_session_id": str(request.get("iterm_session_id", "")).strip(),
             "tty": str(request.get("tty", "")).strip(),
+            # Fork addition: forwarded to InputTarget so the input backend knows
+            # whether it is typing into a terminal or the VS Code webview.
+            "window_id": str(request.get("window_id", "")).strip(),
+            "focus_mode": str(request.get("focus_mode", "")).strip(),
+            "focus_hotkey": str(request.get("focus_hotkey", "")).strip(),
         }
         if not target["session_key"]:
             return None

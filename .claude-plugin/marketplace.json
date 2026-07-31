@@ -1,13 +1,13 @@
 {
   "name": "flipper-claude-buddy",
-  "owner": { "name": "jxw1102" },
+  "owner": { "name": "sudo-Tj95" },
   "plugins": [
     {
       "name": "flipper-claude-buddy",
-      "description": "Flipper Zero hardware controller for Claude Code",
+      "description": "Flipper Zero hardware controller for Claude Code (fork: no always-allow, VS Code extension support, stricter BLE matching)",
       "source": {
         "source": "git-subdir",
-        "url": "https://github.com/jxw1102/flipper-claude-buddy.git",
+        "url": "https://github.com/sudo-Tj95/flipper-claude-buddy.git",
         "path": "plugin"
       }
     }

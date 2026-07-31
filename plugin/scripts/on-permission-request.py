@@ -101,14 +101,19 @@ def main():
         sys.exit(1)
 
     allowed = result.get("allowed", False)
-    always = result.get("always", False)
 
+    # "Always allow" is deliberately not honoured in this fork.
+    #
+    # Upstream maps the Flipper's ALWAYS button onto `updatedPermissions`, which
+    # writes a persistent permission rule into settings.json. The Flipper shows
+    # at most 21 characters of the tool detail on a 128x64 screen, which is not
+    # enough context to grant a standing rule — a one-off "yes" to a truncated
+    # Bash description should not silently become "never ask me about this again".
+    # The bridge already forces always=False (see daemon.py); dropping it here too
+    # keeps the guarantee even if an older or spoofed bridge sends always=true.
+    # ALWAYS therefore behaves exactly like a one-time ALLOW.
     if allowed:
         decision = {"behavior": "allow"}
-        if always:
-            suggestions = hook_input.get("permission_suggestions", [])
-            if suggestions:
-                decision["updatedPermissions"] = suggestions
         output = {
             "hookSpecificOutput": {
                 "hookEventName": "PermissionRequest",

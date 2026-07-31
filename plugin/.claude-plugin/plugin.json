@@ -1,11 +1,11 @@
 {
   "name": "flipper-claude-buddy",
   "description": "Flipper Zero as a physical remote control and feedback device for Claude Code. Provides sound, vibration, and display feedback on a Flipper Zero connected via USB.",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "author": {
     "name": "jxw1102"
   },
-  "repository": "https://github.com/jxw1102/flipper-claude-buddy",
+  "repository": "https://github.com/sudo-Tj95/flipper-claude-buddy",
   "license": "MIT",
   "keywords": [
     "flipper-zero",
@@ -30,7 +30,19 @@
     "bluetoothName": {
       "title": "Bluetooth Name",
       "type": "string",
-      "description": "Flipper Zero BLE device name prefix (required for BLE — shown in Flipper mobile app, e.g. 'Flipper')",
+      "description": "Flipper Zero BLE device name (required for BLE — shown in the Flipper mobile app, e.g. 'Flipper Abcdef'). In this fork a configured name must match EXACTLY, and a device advertising the Flipper service UUID under a different name is rejected.",
+      "sensitive": false
+    },
+    "bluetoothAddress": {
+      "title": "Bluetooth Address (pin)",
+      "type": "string",
+      "description": "Optional. Only connect to this exact BLE address, ignoring name and service UUID — the strongest protection against another device impersonating your Flipper over BLE. Find it in /tmp/claude-flipper-bridge.log: 'BT: found <name> (<address>)'.",
+      "sensitive": false
+    },
+    "vscodeFocusHotkey": {
+      "title": "VS Code Focus Hotkey",
+      "type": "string",
+      "description": "Hotkey the bridge presses to put the caret in the Claude Code input when running as the VS Code extension. Must be bound to the 'claude-vscode.focus' command in VS Code's keybindings.json. Default: cmd+ctrl+alt+j",
       "sensitive": false
     }
   }

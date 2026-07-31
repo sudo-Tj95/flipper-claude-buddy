@@ -35,6 +35,30 @@ TERM_PROGRAM_APP_NAMES = {
 }
 
 
+# Marker substrings identifying a VS Code extension host in the parent process
+# chain. When Claude Code runs as the VS Code *extension* (side bar or tab) there
+# is no controlling tty and TERM_PROGRAM is unset, so walking up to the Electron
+# process that spawned us is the only way to recognise the host.
+VSCODE_PARENT_MARKERS = (
+    "Visual Studio Code.app",
+    "Code Helper (Plugin)",
+    "Code Helper",
+    "/usr/share/code/",
+    "/opt/visual-studio-code/",
+    "\\Microsoft VS Code\\",
+)
+
+# macOS application name to activate for the extension host.
+VSCODE_APP_NAME = "Visual Studio Code"
+
+# Default hotkey the bridge presses to move the caret into the Claude Code
+# input before typing. It must be bound to `claude-vscode.focus` in VS Code's
+# keybindings.json — see README ("VS Code extension mode"). Deliberately NOT
+# cmd+escape: VS Code binds that to focus OR blur depending on where focus
+# already is, so pressing it blind would sometimes dismiss the input.
+DEFAULT_VSCODE_FOCUS_HOTKEY = "cmd+ctrl+alt+j"
+
+
 def _normalize_tty(value: str) -> str:
     value = (value or "").strip()
     if not value or value == "??":
@@ -81,17 +105,71 @@ def detect_tty() -> str:
     return ""
 
 
+def detect_vscode_extension_host() -> bool:
+    """True if we were spawned by the VS Code extension host (not a terminal).
+
+    Only meaningful when TERM_PROGRAM is empty: VS Code's *integrated terminal*
+    sets TERM_PROGRAM=vscode and has a real tty, and is handled by the normal
+    terminal path. The extension host has neither, and its keystroke target is
+    a webview rather than a TUI, so it needs different focus handling.
+    """
+    pid = os.getpid()
+    seen: set[int] = set()
+    # Depth cap: shell -> claude binary -> Code Helper (Plugin) -> Code is 4
+    # levels; allow headroom for wrappers without risking a long ps walk.
+    for _ in range(12):
+        if pid <= 1 or pid in seen:
+            break
+        seen.add(pid)
+        try:
+            out = subprocess.check_output(
+                ["ps", "-o", "ppid=,command=", "-p", str(pid)],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+        except Exception:
+            break
+        if not out:
+            break
+        ppid_str, _, command = out.partition(" ")
+        if any(marker in command for marker in VSCODE_PARENT_MARKERS):
+            return True
+        try:
+            pid = int(ppid_str)
+        except ValueError:
+            break
+    return False
+
+
 def build_target() -> dict[str, str]:
     term_program = (os.environ.get("TERM_PROGRAM") or "").strip()
+    tty = detect_tty()
+    app_name = TERM_PROGRAM_APP_NAMES.get(term_program, term_program)
+    focus_mode = ""
+    focus_hotkey = ""
+
+    # VS Code extension host: no TERM_PROGRAM, no tty, Electron parent.
+    if not term_program and not tty and detect_vscode_extension_host():
+        app_name = VSCODE_APP_NAME
+        focus_mode = "vscode_webview"
+        focus_hotkey = (
+            os.environ.get("FLIPPER_VSCODE_FOCUS_HOTKEY") or DEFAULT_VSCODE_FOCUS_HOTKEY
+        ).strip()
+
     target = {
-        "app_name": TERM_PROGRAM_APP_NAMES.get(term_program, term_program),
+        "app_name": app_name,
         "term_program": term_program,
         "term_session_id": (os.environ.get("TERM_SESSION_ID") or "").strip(),
         "iterm_session_id": (os.environ.get("ITERM_SESSION_ID") or "").strip(),
-        "tty": detect_tty(),
+        "tty": tty,
         # X11 window ID — set by VTE-based terminals (gnome-terminal, kitty, etc.)
         # Used by XdotoolInputBackend on Linux to focus the correct window.
         "window_id": (os.environ.get("WINDOWID") or "").strip(),
+        # Fork addition: how to put the caret where typing should land.
+        # "" = terminal (activate app / select tab by tty).
+        # "vscode_webview" = activate VS Code, then press focus_hotkey.
+        "focus_mode": focus_mode,
+        "focus_hotkey": focus_hotkey,
     }
     material = json.dumps(target, sort_keys=True, separators=(",", ":")).encode()
     target["session_key"] = hashlib.sha1(material).hexdigest()[:16]

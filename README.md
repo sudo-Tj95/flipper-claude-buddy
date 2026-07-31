@@ -4,6 +4,11 @@ Turn your Flipper Zero into a physical companion for Claude Code. Get tactile fe
 
 > Supports macOS and Linux. Windows is not tested.
 
+> **This is a fork** of [jxw1102/flipper-claude-buddy](https://github.com/jxw1102/flipper-claude-buddy)
+> with three changes — **"always allow" disabled**, **VS Code extension support**, and
+> **stricter BLE peer matching**. See **[FORK.md](FORK.md)** for what changed and why,
+> and for the one-time VS Code keybinding you need to add. Everything else is upstream's.
+
 ## What it does
 
 **You feel what Claude is doing.**
@@ -34,7 +39,7 @@ Once paired, Claude Desktop auto-reconnects whenever both sides are online.
 | UP | Start / stop voice dictation |
 | UP (hold) | Hold Space for voice input |
 | LEFT | Interrupt Claude (Esc) |
-| LEFT (hold) | Send Ctrl+C |
+| LEFT (hold) | Send Ctrl+C (Esc in the VS Code extension — see [FORK.md](FORK.md)) |
 | RIGHT | Open slash command menu |
 | RIGHT (hold) | Open menu |
 | OK | Submit Enter (⏎) |
@@ -58,11 +63,16 @@ Download `claude_buddy.fap` from the [latest release](../../releases/latest) and
 > **Requires Python 3.10 or higher.** If you're on an older system Python, upgrade first (e.g. via [pyenv](https://github.com/pyenv/pyenv) or [python.org](https://www.python.org/downloads/)), then reinstall the plugin.
 
 ```bash
-claude plugin marketplace add jxw1102/flipper-claude-buddy
+claude plugin marketplace add sudo-Tj95/flipper-claude-buddy
 claude plugin install flipper-claude-buddy@flipper-claude-buddy
 ```
 
 Claude Code will ask for your connection preference (`auto`, `usb`, or `ble`). Leave everything else empty for auto-detect.
+
+**Running Claude Code as the VS Code extension?** Add the focus keybinding described in
+[FORK.md](FORK.md#required-one-time-setup), or the buttons that type (Enter, "yes", the
+slash-command menu) will have nowhere reliable to type. Sounds, vibration and
+Allow/Deny work without it.
 
 The plugin starts automatically with every Claude Code session and stops when you close it.
 

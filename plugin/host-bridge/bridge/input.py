@@ -92,6 +92,15 @@ class InputTarget:
     iterm_session_id: str = ""
     tty: str = ""
     window_id: str = ""  # X11 window ID (Linux only, set by VTE terminals)
+    # Fork addition — how to place the caret before typing:
+    #   ""                : terminal target (activate app, select tab by tty)
+    #   "vscode_webview"  : VS Code extension host (activate, then focus_hotkey)
+    focus_mode: str = ""
+    focus_hotkey: str = ""
+
+    @property
+    def is_webview(self) -> bool:
+        return self.focus_mode == "vscode_webview"
 
     @classmethod
     def from_payload(cls, payload: dict[str, str] | None) -> "InputTarget | None":
@@ -105,6 +114,8 @@ class InputTarget:
             iterm_session_id=_clean_target_value(payload.get("iterm_session_id")),
             tty=_clean_target_value(payload.get("tty")),
             window_id=_clean_target_value(payload.get("window_id")),
+            focus_mode=_clean_target_value(payload.get("focus_mode")),
+            focus_hotkey=_clean_target_value(payload.get("focus_hotkey")),
         )
         if not any(
             (
@@ -121,6 +132,10 @@ class InputTarget:
 
     def describe(self) -> str:
         parts = []
+        if self.focus_mode:
+            parts.append(f"focus_mode={self.focus_mode}")
+        if self.focus_hotkey:
+            parts.append(f"focus_hotkey={self.focus_hotkey}")
         if self.app_name:
             parts.append(f"app={self.app_name}")
         if self.tty:
@@ -134,6 +149,104 @@ class InputTarget:
         if not parts:
             return "default"
         return ", ".join(parts)
+
+
+# Hotkey token -> AppleScript modifier phrase, for the VS Code focus hotkey.
+_HOTKEY_MODIFIERS_APPLESCRIPT: dict[str, str] = {
+    "cmd": "command down",
+    "command": "command down",
+    "ctrl": "control down",
+    "control": "control down",
+    "alt": "option down",
+    "opt": "option down",
+    "option": "option down",
+    "shift": "shift down",
+}
+
+# Same tokens for xdotool (Linux).
+_HOTKEY_MODIFIERS_XDOTOOL: dict[str, str] = {
+    "cmd": "super",
+    "command": "super",
+    "ctrl": "ctrl",
+    "control": "ctrl",
+    "alt": "alt",
+    "opt": "alt",
+    "option": "alt",
+    "shift": "shift",
+}
+
+
+# AppleScript `keystroke` only takes characters, so function keys — the most
+# collision-free choice for a dedicated focus hotkey — must go through
+# `key code`. macOS virtual key codes for F1-F20.
+_FUNCTION_KEY_CODES: dict[str, int] = {
+    "f1": 122, "f2": 120, "f3": 99,  "f4": 118, "f5": 96,
+    "f6": 97,  "f7": 98,  "f8": 100, "f9": 101, "f10": 109,
+    "f11": 103, "f12": 111, "f13": 105, "f14": 107, "f15": 113,
+    "f16": 106, "f17": 64, "f18": 79, "f19": 80, "f20": 90,
+}
+
+
+def _split_hotkey(hotkey: str) -> tuple[list[str], str]:
+    """Split e.g. 'cmd+ctrl+alt+j' into (['cmd','ctrl','alt'], 'j')."""
+    parts = [p.strip().lower() for p in hotkey.split("+") if p.strip()]
+    if not parts:
+        return [], ""
+    return parts[:-1], parts[-1]
+
+
+def _vscode_focus_script(target: "InputTarget") -> str:
+    """Activate VS Code, then press the hotkey bound to `claude-vscode.focus`.
+
+    Claude Code's VS Code extension renders its input in a webview, so there is
+    no tty to target and no guarantee the caret is in the prompt box — focus may
+    well be sitting in an editor pane, where our keystrokes would be typed into
+    the user's source file. The extension ships a `claude-vscode.focus` command
+    ("Claude Code: Focus input") which is idempotent, so pressing its hotkey
+    before every input event puts the caret in a known place.
+
+    We do NOT use the extension's default cmd+escape: VS Code binds that to
+    `claude-vscode.focus` when `editorTextFocus` and `claude-vscode.blur`
+    otherwise, so pressing it blind would dismiss the input half the time. The
+    user binds a dedicated key to `claude-vscode.focus` only (see README).
+    """
+    lines = [_generic_focus_script(target.app_name or "Visual Studio Code").rstrip()]
+    modifiers, key = _split_hotkey(target.focus_hotkey)
+
+    if key:
+        phrases = [
+            _HOTKEY_MODIFIERS_APPLESCRIPT[m]
+            for m in modifiers
+            if m in _HOTKEY_MODIFIERS_APPLESCRIPT
+        ]
+        using = ", ".join(phrases)
+
+        if key in _FUNCTION_KEY_CODES:
+            code = _FUNCTION_KEY_CODES[key]
+            press = f"    key code {code} using {{{using}}}" if using else f"    key code {code}"
+        elif len(key) == 1:
+            escaped = _escape_applescript(key)
+            press = (
+                f'    keystroke "{escaped}" using {{{using}}}'
+                if using
+                else f'    keystroke "{escaped}"'
+            )
+        else:
+            # Anything else (e.g. "space", "escape", a typo) would be typed out
+            # literally by `keystroke`, dumping junk into the prompt. Skip the
+            # hotkey and just activate the app — the user still gets keystrokes,
+            # they just have to have the input focused already.
+            log.warning(
+                "Unsupported VS Code focus hotkey key %r — use a single character "
+                "or F1-F20. Falling back to app activation only.",
+                key,
+            )
+            press = ""
+
+        if press:
+            lines.extend(['tell application "System Events"', press, "end tell", "delay 0.05"])
+
+    return "\n".join(lines) + "\n"
 
 
 def _generic_focus_script(app_name: str) -> str:
@@ -180,6 +293,8 @@ def _terminal_focus_script(target: InputTarget) -> str:
 def _focus_script(target: InputTarget | None) -> str:
     if not target:
         return ""
+    if target.is_webview:
+        return _vscode_focus_script(target)
     if target.app_name == "Terminal":
         return _terminal_focus_script(target)
     if target.app_name:
@@ -275,6 +390,16 @@ class AppleScriptInputBackend(InputBackend):
         )
 
     async def send_ctrl_c(self) -> None:
+        # In the VS Code extension the target is a webview, not a TUI: Ctrl+C
+        # is inert there (macOS copy is Cmd+C, and there is no SIGINT to send).
+        # Escape is what interrupts a running turn in the extension UI, so the
+        # Flipper's interrupt button maps onto that instead.
+        if self._target and self._target.is_webview:
+            await _run_applescript(
+                _build_key_code_script(_key_code("escape"), target=self._target),
+                "interrupt (webview: Escape)",
+            )
+            return
         await _run_applescript(
             _build_key_code_script(8, modifiers="control down", target=self._target),
             "Ctrl+C",
@@ -420,9 +545,40 @@ class XdotoolInputBackend(InputBackend):
                 ["windowfocus", "--sync", self._target.window_id],
                 "focus",
             )
+        if self._target and self._target.is_webview:
+            # VS Code extension host: raise the window by name, then press the
+            # hotkey bound to `claude-vscode.focus` so the caret lands in the
+            # Claude input rather than an editor pane. See _vscode_focus_script.
+            if not self._target.window_id:
+                await _run_xdotool(
+                    ["search", "--name", "Visual Studio Code", "windowactivate", "--sync", "%1"],
+                    "focus(vscode)",
+                )
+            modifiers, key = _split_hotkey(self._target.focus_hotkey)
+            if key:
+                combo = "+".join(
+                    [
+                        _HOTKEY_MODIFIERS_XDOTOOL[m]
+                        for m in modifiers
+                        if m in _HOTKEY_MODIFIERS_XDOTOOL
+                    ]
+                    + [key]
+                )
+                await _run_xdotool(
+                    [*self._window_args(), "key", "--clearmodifiers", combo],
+                    "focus_hotkey",
+                )
 
     async def send_ctrl_c(self) -> None:
         await self._focus()
+        # See AppleScriptInputBackend.send_ctrl_c — Escape, not Ctrl+C, is what
+        # interrupts a turn in the VS Code extension's webview UI.
+        if self._target and self._target.is_webview:
+            await _run_xdotool(
+                [*self._window_args(), "key", "--clearmodifiers", "Escape"],
+                "interrupt (webview: Escape)",
+            )
+            return
         await _run_xdotool([*self._window_args(), "key", "--clearmodifiers", "ctrl+c"], "Ctrl+C")
 
     async def send_keystroke(self, key: str) -> None:

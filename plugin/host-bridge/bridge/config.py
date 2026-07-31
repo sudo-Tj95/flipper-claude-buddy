@@ -56,6 +56,29 @@ FLIPPER_ADV_UUID = "00003082-0000-1000-8000-00805f9b34fb"
 # does not include service UUIDs (e.g. OS-level advertisement caching).
 BT_DEVICE_NAME   = os.environ.get("FLIPPER_BT_NAME", "Flipper")
 BT_SCAN_TIMEOUT  = float(os.environ.get("FLIPPER_BT_SCAN_TIMEOUT", "10"))
+
+# --- Fork addition: BLE peer pinning -------------------------------------
+# The BLE link carries keystrokes and permission decisions, and upstream
+# accepts the first device advertising FLIPPER_ADV_UUID *or* whose name starts
+# with BT_DEVICE_NAME — no bonding, no address check. Anything in radio range
+# that mimics the two GATT characteristics can therefore impersonate the
+# Flipper and type into the terminal. These two settings narrow that:
+#
+#   FLIPPER_BT_ADDRESS  Strongest: only connect to this exact BLE address
+#                       (macOS shows a per-host UUID here, Linux a MAC).
+#                       Find it in the bridge log line "BT: found <name> (<addr>)".
+#   FLIPPER_BT_STRICT_NAME  When a name is configured, require an exact match
+#                       and do not accept a UUID-only match. Default on, and a
+#                       no-op unless FLIPPER_BT_NAME is explicitly set.
+#
+# Neither is authentication — BLE addresses and names are both forgeable — but
+# they turn a drive-by into something that has to target you specifically.
+BT_ADDRESS = os.environ.get("FLIPPER_BT_ADDRESS", "").strip()
+BT_STRICT_NAME = os.environ.get("FLIPPER_BT_STRICT_NAME", "1").strip().lower() not in (
+    "0", "false", "no", "off",
+)
+# True when the user explicitly set a name (vs. the "Flipper" default).
+BT_NAME_EXPLICIT = bool(os.environ.get("FLIPPER_BT_NAME", "").strip())
 BT_WRITE_CHUNK   = 128  # max bytes per BLE write; capped to negotiated MTU-3 at runtime
 
 # Dual CDC mode: Flipper exposes two serial ports.

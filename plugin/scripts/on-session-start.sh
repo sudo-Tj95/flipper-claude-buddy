@@ -55,6 +55,18 @@ elif [ -f "$BT_NAME_CACHE" ]; then
     export FLIPPER_BT_NAME="$(cat "$BT_NAME_CACHE")"
 fi
 
+# Forward plugin userConfig bluetoothAddress — pins the BLE peer by address so
+# another device cannot impersonate the Flipper by copying its name or UUID.
+if [ -n "${CLAUDE_PLUGIN_OPTION_bluetoothAddress:-}" ]; then
+    export FLIPPER_BT_ADDRESS="$CLAUDE_PLUGIN_OPTION_bluetoothAddress"
+fi
+
+# Forward plugin userConfig vscodeFocusHotkey — read by session-target.py below
+# when Claude Code is running as the VS Code extension rather than in a terminal.
+if [ -n "${CLAUDE_PLUGIN_OPTION_vscodeFocusHotkey:-}" ]; then
+    export FLIPPER_VSCODE_FOCUS_HOTKEY="$CLAUDE_PLUGIN_OPTION_vscodeFocusHotkey"
+fi
+
 # Pass PLUGIN_DATA to bridge so it can write the BT name cache after hello
 export FLIPPER_PLUGIN_DATA="$PLUGIN_DATA"
 

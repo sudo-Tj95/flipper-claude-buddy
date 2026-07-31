@@ -51,17 +51,43 @@ class BtTransport(Transport):
         adv_uuid = config.FLIPPER_ADV_UUID.lower()
         name_prefix = config.BT_DEVICE_NAME
 
+        pinned_address = config.BT_ADDRESS.lower()
+        # Exact-name mode only engages when the user actually configured a name;
+        # with the stock "Flipper" default we keep upstream's prefix behaviour so
+        # nothing changes for people who never set one.
+        strict_name = config.BT_STRICT_NAME and config.BT_NAME_EXPLICIT and bool(name_prefix)
+
         def _is_flipper(device, adv_data) -> bool:
-            # Primary: 0xFEAF is broadcast in every Flipper advertisement packet.
+            # Address pin wins outright: if the user named exactly which peer to
+            # trust, nothing else is considered.
+            if pinned_address:
+                return str(device.address).lower() == pinned_address
+            if strict_name:
+                # A configured name is mandatory rather than a fallback: a
+                # matching advertisement UUID alone does not identify the peer,
+                # since any device can advertise 0x3082.
+                return bool(device.name and device.name == name_prefix)
+            # Upstream behaviour: advertised service UUID, else name prefix (for
+            # OS-level ad caches that strip service UUIDs).
             if adv_uuid in [u.lower() for u in adv_data.service_uuids]:
                 return True
-            # Fallback: name prefix, for OS-level ad caches that strip service UUIDs.
             return bool(name_prefix and device.name and device.name.startswith(name_prefix))
 
-        log.info(
-            "BT: scanning for Flipper (UUID %s or name prefix %r, timeout %.0fs)…",
-            config.FLIPPER_ADV_UUID, name_prefix, config.BT_SCAN_TIMEOUT,
-        )
+        if pinned_address:
+            log.info(
+                "BT: scanning for pinned address %s (timeout %.0fs)…",
+                config.BT_ADDRESS, config.BT_SCAN_TIMEOUT,
+            )
+        elif strict_name:
+            log.info(
+                "BT: scanning for exact name %r (timeout %.0fs)…",
+                name_prefix, config.BT_SCAN_TIMEOUT,
+            )
+        else:
+            log.info(
+                "BT: scanning for Flipper (UUID %s or name prefix %r, timeout %.0fs)…",
+                config.FLIPPER_ADV_UUID, name_prefix, config.BT_SCAN_TIMEOUT,
+            )
         device = await BleakScanner.find_device_by_filter(
             _is_flipper,
             timeout=config.BT_SCAN_TIMEOUT,
