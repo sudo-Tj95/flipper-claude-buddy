@@ -5,7 +5,9 @@
 
 SOCKET="/tmp/claude-flipper-bridge.sock"
 PIDFILE="/tmp/claude-flipper-bridge.pid"
-REFCOUNT_FILE="/tmp/claude-flipper-bridge.refcount"
+# One marker file per live session — see the "Session tracking" comment in
+# on-session-start.sh for why this replaced upstream's single refcount file.
+SESSIONS_DIR="/tmp/claude-flipper-bridge.sessions"
 
 # Read hook payload from stdin and extract the session end reason.
 PAYLOAD=$(cat)
@@ -27,11 +29,20 @@ except Exception:
     print("Disconnected")
 ' 2>/dev/null)
 
-# Decrement session reference counter
-COUNT=$(cat "$REFCOUNT_FILE" 2>/dev/null || echo 1)
-COUNT=$((COUNT - 1))
-if [ "$COUNT" -lt 0 ]; then COUNT=0; fi
-echo "$COUNT" > "$REFCOUNT_FILE"
+# Remove this session's marker, then count what remains. Must use the same
+# id derivation as on-session-start.sh, including the "legacy" fallback.
+SESSION_ID=$(echo "$PAYLOAD" | python3 -c '
+import json, re, sys
+try:
+    sid = json.load(sys.stdin).get("session_id") or ""
+except Exception:
+    sid = ""
+sid = re.sub(r"[^A-Za-z0-9_.-]", "", str(sid))[:64]
+print(sid or "legacy")
+' 2>/dev/null || echo "legacy")
+
+rm -f "$SESSIONS_DIR/$SESSION_ID"
+COUNT=$(ls -1 "$SESSIONS_DIR" 2>/dev/null | wc -l | tr -d ' ')
 
 if [ -S "$SOCKET" ]; then
     python3 "${CLAUDE_PLUGIN_ROOT}/scripts/session-target.py" release_target "$SOCKET" >/dev/null 2>&1 || true
@@ -55,7 +66,7 @@ if [ "$COUNT" -le 0 ]; then
         fi
         rm -f "$PIDFILE"
     fi
-    rm -f "$REFCOUNT_FILE"
+    rmdir "$SESSIONS_DIR" 2>/dev/null || true
 fi
 
 exit 0

@@ -135,6 +135,37 @@ is still no bonding requirement on the link. It raises the cost of an attack fro
 drive-by to targeted; it does not eliminate it. USB remains the transport with no
 remote attack surface.
 
+## 4. Restart race: the bridge no longer kills itself
+
+Upstream tracks live sessions with a single integer in
+`/tmp/claude-flipper-bridge.refcount` — incremented by `SessionStart`,
+decremented by `SessionEnd`, bridge stopped when it hits zero. That is
+order-dependent, and the order is not guaranteed. Observed in practice:
+
+```
+10:46:15  Bridge daemon started        (new session's SessionStart)
+10:46:16  Released input target
+10:46:16  Bridge stopped.              (old session's SessionEnd, 1.4s later)
+```
+
+The old session's exit hook decremented the count to zero and killed the bridge
+that had just started. It is worse than a pure ordering race: a session that was
+already running when the plugin was installed never ran `SessionStart` at all,
+so it never incremented — but it still runs `SessionEnd` on exit and
+decrements. The count then goes negative-in-effect and the bridge dies.
+
+This fork replaces the counter with one marker file per session under
+`/tmp/claude-flipper-bridge.sessions/`, named after the hook payload's
+`session_id` (sanitised to `[A-Za-z0-9_.-]`, falling back to `legacy` when the
+payload has no id, so both hooks still agree). `SessionEnd` removes only its own
+marker and stops the bridge when the directory is empty. Ordering stops
+mattering, because the new session's marker already exists by the time the old
+one is removed.
+
+Side benefits: a duplicate `SessionEnd` for the same session is now idempotent
+rather than fatal, and markers older than 24h are pruned at `SessionStart` so a
+crashed session cannot pin the bridge alive forever.
+
 ## Rebuilding the .fap (optional)
 
 Only needed to hide the ALWAYS toggle on the device itself. The repo's GitHub Actions

@@ -5,8 +5,9 @@ Turn your Flipper Zero into a physical companion for Claude Code. Get tactile fe
 > Supports macOS and Linux. Windows is not tested.
 
 > **This is a fork** of [jxw1102/flipper-claude-buddy](https://github.com/jxw1102/flipper-claude-buddy)
-> with three changes — **"always allow" disabled**, **VS Code extension support**, and
-> **stricter BLE peer matching**. See **[FORK.md](FORK.md)** for what changed and why,
+> with four changes — **"always allow" disabled**, **VS Code extension support**,
+> **stricter BLE peer matching**, and a fix for a **restart race that killed the
+> bridge**. See **[FORK.md](FORK.md)** for what changed and why,
 > and for the one-time VS Code keybinding you need to add. Everything else is upstream's.
 
 ## What it does

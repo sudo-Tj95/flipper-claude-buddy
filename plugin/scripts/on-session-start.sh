@@ -7,6 +7,9 @@ set -euo pipefail
 SOCKET="/tmp/claude-flipper-bridge.sock"
 PIDFILE="/tmp/claude-flipper-bridge.pid"
 LOG="/tmp/claude-flipper-bridge.log"
+# One marker file per live session, replacing upstream's single refcount file.
+# See "Session tracking" below.
+SESSIONS_DIR="/tmp/claude-flipper-bridge.sessions"
 
 # Read hook payload from stdin and extract source for display subtext.
 PAYLOAD=$(cat)
@@ -28,6 +31,20 @@ try:
 except Exception:
     print("")
 ' 2>/dev/null)
+
+# Session id, used as this session's marker filename. Falls back to a shared
+# "legacy" name if the payload has no session_id — both hooks then agree on the
+# same name, degrading to upstream's single-counter behaviour rather than
+# leaking a marker that nothing ever removes.
+SESSION_ID=$(echo "$PAYLOAD" | python3 -c '
+import json, re, sys
+try:
+    sid = json.load(sys.stdin).get("session_id") or ""
+except Exception:
+    sid = ""
+sid = re.sub(r"[^A-Za-z0-9_.-]", "", str(sid))[:64]
+print(sid or "legacy")
+' 2>/dev/null || echo "legacy")
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-.}"
 PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-/tmp/flipper-claude-buddy}"
@@ -97,12 +114,12 @@ if [ -S "$SOCKET" ] && [ -f "$PIDFILE" ]; then
     if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null && [ "$INSTALLED_HASH" != "$CURRENT_HASH" ]; then
         echo "[bridge] Bridge code changed; restarting daemon $OLD_PID..." >&2
         kill "$OLD_PID" 2>/dev/null || true
-        rm -f "$SOCKET" "$PIDFILE" "/tmp/claude-flipper-bridge.refcount"
+        rm -f "$SOCKET" "$PIDFILE"; rm -rf "$SESSIONS_DIR"
         OLD_PID=""
     fi
     if [ -n "$OLD_PID" ] && ! kill -0 "$OLD_PID" 2>/dev/null; then
         echo "[bridge] Cleaning up stale bridge (pid $OLD_PID gone)..." >&2
-        rm -f "$SOCKET" "$PIDFILE" "/tmp/claude-flipper-bridge.refcount"
+        rm -f "$SOCKET" "$PIDFILE"; rm -rf "$SESSIONS_DIR"
     fi
 elif [ -S "$SOCKET" ] && [ ! -f "$PIDFILE" ]; then
     # Socket exists but no pidfile — check if anything is listening
@@ -143,10 +160,23 @@ fi
 # targeting is ready as soon as Flipper events arrive.
 python3 "$PLUGIN_ROOT/scripts/session-target.py" register_target "$SOCKET" >/dev/null 2>&1 || true
 
-# Increment session reference counter
-REFCOUNT_FILE="/tmp/claude-flipper-bridge.refcount"
-COUNT=$(cat "$REFCOUNT_FILE" 2>/dev/null || echo 0)
-echo $((COUNT + 1)) > "$REFCOUNT_FILE"
+# Session tracking: one marker file per live session.
+#
+# Upstream kept a single integer refcount, incremented here and decremented in
+# on-session-end.sh. That is order-dependent, and on a restart Claude Code fires
+# the new session's SessionStart BEFORE the old session's SessionEnd — so the
+# count went 0 -> 1 (new session) -> 0 (old session exiting), and the exit hook
+# killed the bridge that had just started, roughly a second into its life.
+#
+# Marker files make the bookkeeping order-independent: whoever leaves removes
+# only its own marker, and the bridge stops when the directory is empty. The
+# new session's marker already exists by the time the old one is removed, so
+# the bridge survives.
+mkdir -p "$SESSIONS_DIR"
+# Prune markers left behind by sessions that crashed without running their
+# SessionEnd hook; without this a single crash would pin the bridge alive.
+find "$SESSIONS_DIR" -type f -mmin +1440 -delete 2>/dev/null || true
+touch "$SESSIONS_DIR/$SESSION_ID"
 
 PROJECT_DIR="$(pwd)"
 echo "{\"action\":\"claude_connect\",\"project_dir\":\"$PROJECT_DIR\"}" \
