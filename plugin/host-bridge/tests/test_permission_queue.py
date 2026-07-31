@@ -181,6 +181,35 @@ async def test_queue_depth_is_capped():
         await t
 
 
+async def test_abandoned_prompt_promotes_the_queued_one():
+    """A prompt whose hook died must not hold the queue.
+
+    Observed live: a request was answered in the desktop dialog, its hook
+    exited, and the bridge kept that prompt on the device for its full budget.
+    Everything behind it waited, and the ALLOW pressed on the Flipper resolved
+    the dead request — so the button did nothing anywhere. ClaudeIPC cancels
+    the action when the hook disconnects; this asserts the daemon reacts by
+    handing the screen to the next in line.
+    """
+    d, transport = make_daemon()
+
+    stale = asyncio.create_task(d._handle_ipc_action(request("stale")))
+    await settle()
+    queued = asyncio.create_task(d._handle_ipc_action(request("next")))
+    await settle()
+    assert len(prompts_sent(transport)) == 1, "queued prompt displayed too early"
+
+    stale.cancel()  # what ClaudeIPC does when the hook goes away
+    await settle()
+
+    sent = prompts_sent(transport)
+    assert len(sent) == 2, "queued prompt never promoted (got %d)" % len(sent)
+    assert b"next" in sent[1], "wrong prompt promoted"
+
+    await answer(d, True)
+    assert (await queued)["allowed"] is True
+
+
 async def test_hook_socket_timeout_outlasts_the_bridge_queue():
     """The hook must not hang up on a prompt the bridge is still showing.
 

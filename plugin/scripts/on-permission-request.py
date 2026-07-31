@@ -5,6 +5,7 @@ import json
 import os
 import socket
 import sys
+import time
 
 SOCKET_PATH = "/tmp/claude-flipper-bridge.sock"
 # Seconds to wait for a decision on the Flipper. This must outlast the bridge's
@@ -30,9 +31,41 @@ def send_to_bridge(tool: str, detail: str, command: str = "") -> dict:
     msg = json.dumps(payload)
     s.sendall(msg.encode())
     s.shutdown(socket.SHUT_WR)
-    resp = s.recv(4096)
-    s.close()
-    return json.loads(resp.decode())
+    try:
+        return _read_response(s)
+    finally:
+        s.close()
+
+
+def _read_response(s: socket.socket) -> dict:
+    """Read the bridge's reply, skipping keepalives.
+
+    While the prompt sits on the Flipper the bridge writes blank-line
+    keepalives to check this process is still alive — it has no other way to
+    tell, since we half-closed above and a dead peer is indistinguishable from
+    a waiting one until something is written. So the reply is newline-delimited
+    JSON that may be preceded by empty records, and a single recv() is not
+    enough: it can return nothing but a keepalive.
+
+    TIMEOUT is an overall deadline rather than a per-recv one, so keepalives
+    cannot extend the wait indefinitely.
+    Covered by host-bridge/tests/test_hook_disconnect.py.
+    """
+    deadline = time.monotonic() + TIMEOUT
+    buf = b""
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise socket.timeout("no response from bridge within %ss" % TIMEOUT)
+        s.settimeout(remaining)
+        chunk = s.recv(4096)
+        if not chunk:
+            raise ConnectionError("bridge closed without responding")
+        buf += chunk
+        for line in buf.split(b"\n"):
+            line = line.strip()
+            if line:
+                return json.loads(line.decode())
 
 
 # Must match protocol.PERM_DETAIL_MAX / PERM_TOOL_MAX in the bridge. The hook

@@ -332,12 +332,49 @@ Two details that are easy to get wrong, both covered by
   and the answer has nowhere to go. The test asserts the inequality so the two
   numbers cannot drift apart.
 
+### Abandoned prompts are dropped, not left blocking
+
+Queueing introduced a failure of its own, found within minutes of running it on
+real hardware. When Claude Code gives up on a request — you answered in the
+desktop dialog, or the turn was interrupted — the hook process exits, but the
+bridge had no idea. It kept that prompt on the device for its full 60s, every
+queued prompt waited behind it, and the ALLOW eventually pressed on the Flipper
+resolved the *dead* request. The button appeared to do nothing, anywhere.
+
+Detecting this is fiddlier than it looks:
+
+- The hook half-closes its write side as soon as it has sent the request
+  (`shutdown(SHUT_WR)`), so **read-EOF arrives on every request** and says
+  nothing about liveness.
+- On macOS **`POLLHUP` is set in both cases** — measured, not assumed:
+
+  ```
+  mode=live  poll_bits=17 (POLLIN|POLLHUP)  write=ok
+  mode=dead  poll_bits=17 (POLLIN|POLLHUP)  write=BrokenPipeError
+  ```
+
+Attempting a write is the only thing that separates them. So while an action is
+pending, `ClaudeIPC` writes a keepalive every `HOOK_KEEPALIVE_INTERVAL` (5s); a
+`BrokenPipeError` cancels the action, which unwinds the daemon's `finally`
+blocks, releases the lock and promotes the next queued prompt.
+
+The keepalive is a bare newline, and responses are newline-delimited JSON, so it
+is an empty record. Hooks skip blank lines when reading
+(`decode_hook_response()`, and `_read_response()` in the hook, which also turns
+`TIMEOUT` into an overall deadline so keepalives cannot extend the wait).
+
+**Residual:** if an abandoned prompt had nothing queued behind it, the device
+keeps displaying it until the next button press, which the bridge ignores. The
+protocol has no "cancel prompt" message and adding one means a firmware change;
+the stale view clears itself on that press.
+
 ### Running the tests
 
 The repo has no test framework and the bridge has no test-only dependencies:
 
 ```bash
 python3 plugin/host-bridge/tests/test_permission_queue.py
+python3 plugin/host-bridge/tests/test_hook_disconnect.py
 ```
 
 ## Rebuilding the .fap (optional)
