@@ -232,8 +232,8 @@ class Daemon:
             return {"status": "ok", "released": released}
 
         elif action == "permission_request":
-            tool = request.get("tool", "Tool")[:21]
-            detail = request.get("detail", "")[:21]
+            tool = request.get("tool", "Tool")[:protocol.PERM_TOOL_MAX]
+            detail = request.get("detail", "")[:protocol.PERM_DETAIL_MAX]
             log.info("Permission request: %s %s", tool, detail)
 
             if self._perm_future and not self._perm_future.done():

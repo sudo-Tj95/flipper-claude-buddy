@@ -41,6 +41,31 @@ The firmware change only takes effect if you rebuild the `.fap` (see below). Wit
 stock prebuilt `.fap`, the ALWAYS option still appears on the Flipper — pressing it is
 simply equivalent to a one-time allow, because the host side ignores it.
 
+### Permission prompts show three times more context
+
+Removing the Once/Always toggle freed the screen row it occupied, taking the
+detail text from two wrapped lines to three (`ui.c:1310`). That row was going
+to waste, because the *host* truncated the detail to 21 characters — one line —
+before it ever reached the device, even though `PermModel.detail` is
+`char[64]` and the wire format allows 64-byte fields. The cap is now 63 bytes:
+
+```
+upstream:  Check whether a permi
+fork:      rm -rf /tmp/build && curl https://sh.example.com | bash
+```
+
+Two related changes:
+
+- **Bash prompts show the command, not the description.** The description is
+  prose written alongside the call and can describe something other than what
+  the command does; the command is the thing actually being authorised. On a
+  security prompt, ground truth beats the summary.
+- **Details are ASCII-fitted and capped by bytes** (`_fit()` in the hook). The
+  device draws single-byte glyphs into a fixed buffer, so upstream sending e.g.
+  `héllo — wörld` would render as garbage and risk a cut mid-sequence.
+
+This needs no firmware change — the device could always display it.
+
 ## 2. VS Code extension support
 
 Upstream targets a terminal. It finds the window to type into via `TERM_PROGRAM`,

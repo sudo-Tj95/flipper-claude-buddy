@@ -59,8 +59,20 @@ def menu_msg(items: list[str]) -> bytes:
     return encode("menu", {"items": "|".join(items)})
 
 
+# The Flipper's permission view holds `char detail[64]` and wraps it to three
+# lines (ui.h:88, ui.c:1311), and the wire format allows 64-byte fields
+# (PROTOCOL_MAX_FIELD_LEN). Upstream truncated the detail to 21 characters here
+# anyway — one line's worth — so a Bash approval showed the first 21 characters
+# of its description and told you almost nothing about what would actually run.
+# Removing the Once/Always toggle freed the row it occupied, taking the detail
+# from two wrapped lines to three, so we now send what the device can display.
+# `tool` stays at 21 because PermModel.tool is char[22].
+PERM_TOOL_MAX = 21
+PERM_DETAIL_MAX = 63
+
+
 def perm_msg(tool: str, detail: str = "") -> bytes:
-    d: dict = {"tool": tool[:21]}
+    d: dict = {"tool": tool[:PERM_TOOL_MAX]}
     if detail:
-        d["detail"] = detail[:21]
+        d["detail"] = detail[:PERM_DETAIL_MAX]
     return encode("perm", d)

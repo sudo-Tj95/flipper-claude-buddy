@@ -809,15 +809,21 @@ static int info_menu_step(int from, int delta) {
     return from;
 }
 
+/* Upstream credit is kept first — this is jxw1102's app under MIT; the fork
+ * only adds the no-always-allow / VS Code / BLE-matching changes. */
 static const char* about_lines[] = {
     "Claude Buddy",
-    "v0.6",
+    "v0.6.4 (fork)",
     "Claude Code companion",
     "by jxw1102",
     "github.com/jxw1102",
     "/flipper-claude-buddy",
+    "",
+    "Fork by sudo-Tj95",
+    "github.com/sudo-Tj95",
+    "/flipper-claude-buddy",
 };
-#define ABOUT_LINE_COUNT 6
+#define ABOUT_LINE_COUNT 10
 #define ABOUT_VISIBLE    3
 
 typedef struct {
@@ -848,7 +854,7 @@ static const HelpEntry help_entries_bridge[] = {
     {HelpBtnText,  false, "Install plugin:"},
     {HelpBtnText,  false, "```"},
     {HelpBtnText,  false, "claude plugin marketplace"},
-    {HelpBtnText,  false, "add jxw1102/flipper-"},
+    {HelpBtnText,  false, "add sudo-Tj95/flipper-"},
     {HelpBtnText,  false, "claude-buddy"},
     {HelpBtnText,  false, ""},
     {HelpBtnText,  false, "claude plugin install"},

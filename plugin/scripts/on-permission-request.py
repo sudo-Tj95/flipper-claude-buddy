@@ -22,32 +22,71 @@ def send_to_bridge(tool: str, detail: str) -> dict:
     return json.loads(resp.decode())
 
 
+# Must match protocol.PERM_DETAIL_MAX / PERM_TOOL_MAX in the bridge. The hook
+# runs as a standalone script with no access to the bridge's venv, so the
+# limits are duplicated rather than imported.
+DETAIL_MAX = 63
+TOOL_MAX = 21
+
+
+def _fit(text: str) -> str:
+    """Make *text* safe for the Flipper's `char detail[64]` and its font.
+
+    The device draws single-byte glyphs and copies into a fixed 64-byte buffer,
+    so anything non-ASCII would both render as garbage and risk being cut
+    mid-sequence. Collapse whitespace, drop non-printable and non-ASCII
+    characters, then cap by BYTES rather than characters.
+    """
+    text = " ".join(str(text).split())
+    text = "".join(c for c in text if 0x20 <= ord(c) < 0x7F)
+    return text.encode("ascii", "ignore")[:DETAIL_MAX].decode("ascii")
+
+
 def extract_detail(tool_name: str, tool_input: dict) -> str:
-    """Extract a short detail string from the tool input."""
+    """Extract a detail string from the tool input, for display on the Flipper.
+
+    Fits the device's `char detail[64]`, wrapped to three lines. Upstream capped
+    everything at 21 characters, which is why a Bash prompt read as e.g.
+    "Check whether a permi" — enough to identify nothing.
+    """
     # Special handling for mcp__atlassian__searchJiraIssuesUsingJql and similar
     if "__" in tool_name:
         parts = tool_name.split("__")
         if len(parts) >= 3:
             # e.g. mcp__atlassian__searchJiraIssuesUsingJql
-            return parts[-1][:21]
+            return _fit(parts[-1])
     if tool_name == "Bash":
-        desc = tool_input.get("description", "")
-        if desc:
-            return desc[:21]
+        # Prefer the COMMAND over the description. The description is prose
+        # written alongside the call and can describe something other than what
+        # the command does; the command is the thing actually being authorised.
+        # With 63 characters there is room for it, and on a security prompt the
+        # ground truth beats the summary.
         cmd = tool_input.get("command", "")
-        return cmd[:21] if cmd else ""
+        return _fit(cmd) if cmd else _fit(tool_input.get("description", ""))
     if tool_name in ("Edit", "Write", "Read"):
-        path = tool_input.get("file_path", "")
-        return os.path.basename(path)[:21] if path else ""
+        path = str(tool_input.get("file_path", ""))
+        if not path:
+            return ""
+        if len(path) <= DETAIL_MAX:
+            return _fit(path)
+        # Keep the tail: filename plus as much parent as fits identifies the
+        # target far better than a bare basename. Realign to a path separator
+        # so it does not start mid-component, and mark the elision in ASCII
+        # ("..." not "…" — the device has no UTF-8 font).
+        tail = path[-(DETAIL_MAX - 3):]
+        cut = tail.find("/")
+        if 0 <= cut < 20:
+            tail = tail[cut:]
+        return _fit("..." + tail)
     if tool_name in ("WebFetch", "WebSearch"):
-        val = tool_input.get("url") or tool_input.get("query", "")
+        val = str(tool_input.get("url") or tool_input.get("query", ""))
         for prefix in ("https://", "http://"):
             if val.startswith(prefix):
                 val = val[len(prefix):]
                 break
-        return val[:21]
+        return _fit(val)
     if tool_name == "Agent":
-        return tool_input.get("description", "")[:21]
+        return _fit(tool_input.get("description", ""))
     return ""
 
 
@@ -105,10 +144,10 @@ def main():
     # "Always allow" is deliberately not honoured in this fork.
     #
     # Upstream maps the Flipper's ALWAYS button onto `updatedPermissions`, which
-    # writes a persistent permission rule into settings.json. The Flipper shows
-    # at most 21 characters of the tool detail on a 128x64 screen, which is not
-    # enough context to grant a standing rule — a one-off "yes" to a truncated
-    # Bash description should not silently become "never ask me about this again".
+    # writes a persistent permission rule into settings.json. Even with this
+    # fork's wider detail (63 chars over three wrapped lines, up from upstream's
+    # 21), a 128x64 screen is not the place to grant a standing rule — a one-off
+    # "yes" should not silently become "never ask me about this again".
     # The bridge already forces always=False (see daemon.py); dropping it here too
     # keeps the guarantee even if an older or spoofed bridge sends always=true.
     # ALWAYS therefore behaves exactly like a one-time ALLOW.
