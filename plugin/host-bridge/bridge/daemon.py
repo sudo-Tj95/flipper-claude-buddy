@@ -15,6 +15,21 @@ from .voice import DictationBackend, create_backend as create_dictation_backend
 
 log = logging.getLogger(__name__)
 
+# Permission prompt queueing. The Flipper has one permission view, so prompts
+# are shown one at a time and the rest wait their turn.
+#
+# How many may WAIT, in addition to the one currently on screen. Past this the
+# bridge answers `busy` and the decision falls back to the desktop dialog —
+# deliberately, because a deep queue means clicking through prompts long after
+# the context that produced them has scrolled away.
+PERM_MAX_QUEUED = 2
+# Budget for a prompt once it is actually visible on the device.
+PERM_DISPLAY_TIMEOUT = 60.0
+# Budget for waiting to reach the screen. Worst case a request spends
+# QUEUE_WAIT + DISPLAY before answering, so the hook's socket timeout
+# (on-permission-request.py: TIMEOUT) must exceed their sum.
+PERM_QUEUE_WAIT_TIMEOUT = 120.0
+
 
 class Daemon:
     def __init__(self, transport: Transport, dictation: DictationBackend | None = None, input_backend: InputBackend | None = None):
@@ -25,6 +40,10 @@ class Daemon:
         self._dictating = False
         self._claude_connected = False
         self._perm_future: asyncio.Future | None = None
+        # Serialises prompts onto the device's single permission view; the
+        # counter bounds how many may be waiting behind it.
+        self._perm_lock = asyncio.Lock()
+        self._perm_queued = 0
         self._menu_sent = False
         self._cmd_map: dict[str, str] = {}  # truncated -> full command
         # What Bash permission prompts show: set on the Flipper (Menu ->
@@ -271,42 +290,76 @@ class Daemon:
                 detail = protocol.fit_detail(request.get("detail", ""))
             log.info("Permission request: %s %s [%s]", tool, detail, self._perm_detail_mode)
 
-            if self._perm_future and not self._perm_future.done():
-                log.info("Permission busy, rejecting")
+            # Claude Code issues tool calls in parallel, so prompts arrive in
+            # bursts. Upstream answered `busy` to everything after the first,
+            # which drops the decision back to the desktop dialog — the one
+            # place you cannot reach when the point of the device is approving
+            # things away from the machine. Queue instead, one on screen at a
+            # time (the Flipper has a single permission view).
+            if self._perm_queued > PERM_MAX_QUEUED:
+                log.info("Permission queue full (%d waiting), rejecting", self._perm_queued - 1)
                 return {"status": "busy", "allowed": False}
 
             if not self.serial.connected:
                 log.info("No Flipper, falling back")
                 return {"status": "no_flipper", "allowed": None}
 
-            self._perm_future = asyncio.get_running_loop().create_future()
-            await self.serial.send(protocol.perm_msg(tool, detail))
-
-            if not self.serial.connected:
-                log.info("Send failed, no Flipper")
-                self._perm_future = None
-                return {"status": "no_flipper"}
-
+            self._perm_queued += 1
             try:
-                log.info("Waiting for Flipper response (60s timeout)")
-                result = await asyncio.wait_for(self._perm_future, timeout=60.0)
-                if result is None:
-                    log.info("Permission cancelled (Flipper reset)")
-                    return {"status": "no_flipper"}
-                if result.get("ask"):
-                    log.info("Permission dismissed — deferring to Claude")
-                    return {"status": "ask"}
-                log.info("Permission result: %s", result)
-                return {
-                    "status": "ok",
-                    "allowed": result["allow"],
-                    "always": result["always"],
-                }
-            except asyncio.TimeoutError:
-                log.info("Permission timed out")
-                return {"status": "timeout"}
+                # The display timeout must start when the prompt actually
+                # reaches the screen, not when it was enqueued — otherwise a
+                # queued request burns its budget waiting and the user is shown
+                # a prompt that is already doomed to time out.
+                try:
+                    await asyncio.wait_for(
+                        self._perm_lock.acquire(), timeout=PERM_QUEUE_WAIT_TIMEOUT
+                    )
+                except asyncio.TimeoutError:
+                    log.info("Permission gave up waiting in queue")
+                    return {"status": "timeout"}
+
+                try:
+                    # Connection can drop while queued.
+                    if not self.serial.connected:
+                        log.info("No Flipper after queueing, falling back")
+                        return {"status": "no_flipper", "allowed": None}
+
+                    self._perm_future = asyncio.get_running_loop().create_future()
+                    await self.serial.send(protocol.perm_msg(tool, detail))
+
+                    if not self.serial.connected:
+                        log.info("Send failed, no Flipper")
+                        return {"status": "no_flipper"}
+
+                    try:
+                        log.info(
+                            "Waiting for Flipper response (%gs timeout, %d queued)",
+                            PERM_DISPLAY_TIMEOUT, self._perm_queued - 1,
+                        )
+                        result = await asyncio.wait_for(
+                            self._perm_future, timeout=PERM_DISPLAY_TIMEOUT
+                        )
+                        if result is None:
+                            log.info("Permission cancelled (Flipper reset)")
+                            return {"status": "no_flipper"}
+                        if result.get("ask"):
+                            log.info("Permission dismissed — deferring to Claude")
+                            return {"status": "ask"}
+                        log.info("Permission result: %s", result)
+                        return {
+                            "status": "ok",
+                            "allowed": result["allow"],
+                            "always": result["always"],
+                        }
+                    except asyncio.TimeoutError:
+                        log.info("Permission timed out")
+                        return {"status": "timeout"}
+                    finally:
+                        self._perm_future = None
+                finally:
+                    self._perm_lock.release()
             finally:
-                self._perm_future = None
+                self._perm_queued -= 1
 
         return {"status": "unknown_action"}
 

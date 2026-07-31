@@ -7,7 +7,14 @@ import socket
 import sys
 
 SOCKET_PATH = "/tmp/claude-flipper-bridge.sock"
-TIMEOUT = 60  # seconds to wait for user decision on Flipper
+# Seconds to wait for a decision on the Flipper. This must outlast the bridge's
+# worst case, because prompts queue: a request can wait
+# daemon.PERM_QUEUE_WAIT_TIMEOUT (120s) for the device's single permission view
+# to free up, then get daemon.PERM_DISPLAY_TIMEOUT (60s) on screen. Hanging up
+# earlier would abandon a prompt the user is still looking at — they press
+# ALLOW and the answer has nowhere to go.
+# Covered by host-bridge/tests/test_permission_queue.py.
+TIMEOUT = 185
 
 
 def send_to_bridge(tool: str, detail: str, command: str = "") -> dict:

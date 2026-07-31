@@ -1,10 +1,11 @@
 # Fork changes
 
 This is a fork of [jxw1102/flipper-claude-buddy](https://github.com/jxw1102/flipper-claude-buddy)
-(MIT). Upstream is excellent and unmodified in every respect not listed here. Three
-things differ, all for the same reason: this Flipper drives Claude Code sessions that
-have write access to a home-automation stack, so the failure modes worth guarding
-against are "approved something I couldn't read" and "typed into the wrong window".
+(MIT). Upstream is excellent and unmodified in every respect not listed here. Five
+things differ, mostly for the same reason: this Flipper drives Claude Code sessions
+that have write access to a home-automation stack, so the failure modes worth guarding
+against are "approved something I couldn't read", "typed into the wrong window", and
+"the decision quietly went back to a laptop I am nowhere near".
 
 ## 1. "Always allow" is disabled
 
@@ -288,6 +289,56 @@ one is removed.
 Side benefits: a duplicate `SessionEnd` for the same session is now idempotent
 rather than fatal, and markers older than 24h are pruned at `SessionStart` so a
 crashed session cannot pin the bridge alive forever.
+
+## 5. Concurrent permission prompts queue instead of being dropped
+
+Claude Code issues tool calls in parallel, so permission prompts arrive in
+bursts. Upstream holds a single pending-permission slot and answers `busy` to
+anything that arrives while a prompt is on screen:
+
+```
+14:09:21  Permission request: Bash tail -25 /tmp/claude-flipper-bridge.log
+14:09:22  Permission request: Bash cat "/Users/tonyjoy/Library/Application …
+14:09:22  Permission busy, rejecting
+```
+
+The rejected hook exits non-zero and Claude falls back to the desktop dialog —
+the one place you cannot reach when the entire point of the device is approving
+things away from the machine. The second decision silently stops being yours to
+make from the Flipper.
+
+Prompts now queue on a lock, one on screen at a time (the device has a single
+permission view), with three bounds in `daemon.py`:
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `PERM_MAX_QUEUED` | 2 | May be waiting behind the visible one; past this, `busy` as before |
+| `PERM_DISPLAY_TIMEOUT` | 60s | Budget once actually on screen |
+| `PERM_QUEUE_WAIT_TIMEOUT` | 120s | Budget waiting to reach the screen |
+
+The queue is deliberately shallow. A deep one means clicking through prompts
+long after the context that produced them has scrolled away, which is worse
+than falling back to the laptop.
+
+Two details that are easy to get wrong, both covered by
+`host-bridge/tests/test_permission_queue.py`:
+
+- **The display timeout starts when the prompt reaches the screen**, not when
+  it was enqueued. Otherwise a queued request burns its budget waiting and the
+  user is shown a prompt already doomed to time out.
+- **The hook's socket timeout must outlast the bridge's worst case**
+  (`on-permission-request.py: TIMEOUT`, raised 60s → 185s > 120 + 60). Left at
+  60s the hook hangs up on a prompt the user is still reading: they press ALLOW
+  and the answer has nowhere to go. The test asserts the inequality so the two
+  numbers cannot drift apart.
+
+### Running the tests
+
+The repo has no test framework and the bridge has no test-only dependencies:
+
+```bash
+python3 plugin/host-bridge/tests/test_permission_queue.py
+```
 
 ## Rebuilding the .fap (optional)
 
