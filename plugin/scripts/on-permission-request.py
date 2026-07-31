@@ -3,6 +3,7 @@
 
 import json
 import os
+import re
 import socket
 import sys
 
@@ -27,6 +28,38 @@ def send_to_bridge(tool: str, detail: str) -> dict:
 # limits are duplicated rather than imported.
 DETAIL_MAX = 63
 TOOL_MAX = 21
+
+
+# What to show for Bash prompts: "description" (default), "command", or "both".
+#
+# Description wins by default because commands are usually front-loaded with
+# boilerplate — most agent-issued commands begin with a long `cd "/path" &&`,
+# which is exactly the part that survives truncation and tells you nothing:
+#
+#   |cd "/Users/tonyjoy/D|
+#   |ocuments/Claude     |
+#   |Projects/flipper-   |
+#
+# "command" mode is available for anyone who wants ground truth over summary —
+# a description is prose written alongside the call and can describe something
+# other than what runs. Both modes strip the boilerplate prefix first.
+DETAIL_MODE = (
+    os.environ.get("CLAUDE_PLUGIN_OPTION_permissionDetail")
+    or os.environ.get("FLIPPER_PERM_DETAIL")
+    or "description"
+).strip().lower()
+
+# Leading `cd <path> &&`, repeated, plus leading VAR=value assignments.
+_NOISE_RE = re.compile(
+    r'^\s*(?:cd\s+(?:"[^"]*"|\'[^\']*\'|[^\s&;|]+)\s*&&\s*|[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+'
+)
+
+
+def _strip_noise(cmd: str) -> str:
+    """Drop `cd …&&` / env-assignment prefixes that would eat the whole display."""
+    stripped = _NOISE_RE.sub("", cmd, count=1)
+    # If stripping left nothing meaningful, the prefix *was* the command.
+    return stripped if stripped.strip() else cmd
 
 
 def _fit(text: str) -> str:
@@ -56,13 +89,14 @@ def extract_detail(tool_name: str, tool_input: dict) -> str:
             # e.g. mcp__atlassian__searchJiraIssuesUsingJql
             return _fit(parts[-1])
     if tool_name == "Bash":
-        # Prefer the COMMAND over the description. The description is prose
-        # written alongside the call and can describe something other than what
-        # the command does; the command is the thing actually being authorised.
-        # With 63 characters there is room for it, and on a security prompt the
-        # ground truth beats the summary.
-        cmd = tool_input.get("command", "")
-        return _fit(cmd) if cmd else _fit(tool_input.get("description", ""))
+        desc = str(tool_input.get("description", "")).strip()
+        cmd = _strip_noise(str(tool_input.get("command", ""))).strip()
+        if DETAIL_MODE == "command":
+            return _fit(cmd or desc)
+        if DETAIL_MODE == "both" and desc and cmd:
+            # Description first so it survives truncation; command fills the rest.
+            return _fit(f"{desc}: {cmd}")
+        return _fit(desc or cmd)
     if tool_name in ("Edit", "Write", "Read"):
         path = str(tool_input.get("file_path", ""))
         if not path:
