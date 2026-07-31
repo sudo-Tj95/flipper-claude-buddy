@@ -53,9 +53,12 @@ VSCODE_APP_NAME = "Visual Studio Code"
 
 # Default hotkey the bridge presses to move the caret into the Claude Code
 # input before typing. It must be bound to `claude-vscode.focus` in VS Code's
-# keybindings.json — see README ("VS Code extension mode"). Deliberately NOT
-# cmd+escape: VS Code binds that to focus OR blur depending on where focus
-# already is, so pressing it blind would sometimes dismiss the input.
+# keybindings.json, guarded by
+# `"when": "activeWebviewPanelId == 'claudeVSCodePanel'"` — without that guard
+# the command opens the last Claude session in a tab, which may not be the
+# session this Flipper is driving. See FORK.md ("VS Code extension support").
+# Deliberately NOT cmd+escape: VS Code binds that to focus OR blur depending on
+# where focus already is, so pressing it blind would sometimes dismiss the input.
 DEFAULT_VSCODE_FOCUS_HOTKEY = "cmd+ctrl+alt+j"
 
 

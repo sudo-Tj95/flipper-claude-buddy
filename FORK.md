@@ -133,9 +133,9 @@ focusing at all. This fork:
   `TERM_PROGRAM` being empty *and* there being no tty — so VS Code's integrated
   terminal keeps using the existing, better-targeted terminal path.
 - **Focuses the Claude input before typing.** The extension ships a
-  `claude-vscode.focus` command ("Claude Code: Focus input") which is idempotent. The
-  bridge activates VS Code and presses a hotkey bound to it, so the caret is in a known
-  place rather than in one of your source files.
+  `claude-vscode.focus` command ("Claude Code: Focus input"). The bridge activates VS
+  Code and presses a hotkey bound to it, so the caret is in a known place rather than in
+  one of your source files. The binding **must** carry a `when` clause — see below.
 - **Maps the interrupt button to Escape instead of Ctrl+C.** In a webview there is no
   SIGINT to send and `Ctrl+C` is inert (macOS copy is Cmd+C); Escape is what interrupts
   a running turn in the extension UI.
@@ -152,13 +152,55 @@ dismiss the input about half the time. Bind a dedicated key instead.
 ```json
 {
   "key": "cmd+ctrl+alt+j",
-  "command": "claude-vscode.focus"
+  "command": "claude-vscode.focus",
+  "when": "activeWebviewPanelId == 'claudeVSCodePanel'"
 }
 ```
 
 To use a different key, set the `vscodeFocusHotkey` plugin option (or
 `FLIPPER_VSCODE_FOCUS_HOTKEY`) to match. Single characters and `F1`–`F20` are
 supported; `F19` is a good choice if you have it, since nothing else claims it.
+
+#### The `when` clause is not optional
+
+`claude-vscode.focus` is not a pure focus command. Reading the shipped
+`extension.js` (v2.1.220):
+
+```js
+registerCommand("claude-vscode.focus", async () => {
+  if (!r.hasVisibleWebview())
+    await commands.executeCommand("claude-vscode.editor.openLast");
+  let n = window.activeTextEditor;
+  if (!n) { t.fire(""); return }
+  ...
+  t.fire(`@${o}#${a}-${c}`)
+})
+```
+
+Two side effects follow from that, and an unguarded binding hits both:
+
+- **It navigates.** With no Claude webview visible it runs
+  `claude-vscode.editor.openLast`, opening the *last* session in an editor tab.
+  If you keep several Claude conversations open, that is not necessarily the
+  session the Flipper is bound to — so a button press could be delivered to the
+  wrong conversation. Observed in practice: pressing ENTER while a source file
+  was the active tab jumped to an unrelated Claude tab.
+- **It can inject an @-mention.** When a text editor is active with a non-empty
+  selection it fires `@path#start-end` into the Claude input. ENTER then submits
+  that. Harmless but wasteful — it costs a turn.
+
+`activeWebviewPanelId == 'claudeVSCodePanel'` is the extension's own context key
+(it uses it for its `cmd+n` binding). Gating on it makes the `openLast` branch
+unreachable, because a Claude tab being active implies a visible webview.
+
+**The residual limitation is architectural.** VS Code exposes no command to
+focus a *specific* Claude session, and the bridge cannot read which tab is
+active — the window title shows the conversation name, which is
+indistinguishable from a filename. So when no Claude tab is active the hotkey
+now correctly does nothing, and the keystroke goes wherever focus already is.
+Leave the Claude tab you want to drive as the active tab when you walk away
+from the machine. Permission Allow/Deny is unaffected either way: it runs
+through hooks over the unix socket and never touches the keyboard.
 
 ### Dictation focuses first
 

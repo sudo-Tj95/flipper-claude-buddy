@@ -211,13 +211,23 @@ def _vscode_focus_script(target: "InputTarget") -> str:
     no tty to target and no guarantee the caret is in the prompt box — focus may
     well be sitting in an editor pane, where our keystrokes would be typed into
     the user's source file. The extension ships a `claude-vscode.focus` command
-    ("Claude Code: Focus input") which is idempotent, so pressing its hotkey
-    before every input event puts the caret in a known place.
+    ("Claude Code: Focus input"); pressing its hotkey before every input event
+    puts the caret in a known place.
 
     We do NOT use the extension's default cmd+escape: VS Code binds that to
     `claude-vscode.focus` when `editorTextFocus` and `claude-vscode.blur`
     otherwise, so pressing it blind would dismiss the input half the time. The
-    user binds a dedicated key to `claude-vscode.focus` only (see README).
+    user binds a dedicated key to `claude-vscode.focus` only (see FORK.md).
+
+    That user binding MUST be guarded with
+    `"when": "activeWebviewPanelId == 'claudeVSCodePanel'"`. `focus` is not the
+    pure caret move its name suggests: with no Claude webview visible it runs
+    `claude-vscode.editor.openLast`, opening the LAST session in a tab — which
+    with several conversations open may not be the session this bridge is bound
+    to, delivering the keystroke to the wrong one. We cannot enforce the guard
+    from here (it lives in the user's keybindings.json) and we cannot detect the
+    active tab either: VS Code's window title shows the conversation name, which
+    is indistinguishable from a filename. Hence FORK.md documents it loudly.
     """
     lines = [_generic_focus_script(target.app_name or "Visual Studio Code").rstrip()]
     modifiers, key = _split_hotkey(target.focus_hotkey)

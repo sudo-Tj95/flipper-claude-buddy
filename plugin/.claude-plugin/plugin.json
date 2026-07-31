@@ -48,7 +48,7 @@
     "vscodeFocusHotkey": {
       "title": "VS Code Focus Hotkey",
       "type": "string",
-      "description": "Hotkey the bridge presses to put the caret in the Claude Code input when running as the VS Code extension. Must be bound to the 'claude-vscode.focus' command in VS Code's keybindings.json. Default: cmd+ctrl+alt+j",
+      "description": "Hotkey the bridge presses to put the caret in the Claude Code input when running as the VS Code extension. Must be bound to the 'claude-vscode.focus' command in VS Code's keybindings.json, guarded by \"when\": \"activeWebviewPanelId == 'claudeVSCodePanel'\" — without that guard the command opens the LAST Claude session in a tab, which may not be the one your Flipper is driving. Default: cmd+ctrl+alt+j",
       "sensitive": false
     }
   }
