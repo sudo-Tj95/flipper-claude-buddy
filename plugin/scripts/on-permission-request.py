@@ -3,7 +3,6 @@
 
 import json
 import os
-import re
 import socket
 import sys
 
@@ -11,11 +10,17 @@ SOCKET_PATH = "/tmp/claude-flipper-bridge.sock"
 TIMEOUT = 60  # seconds to wait for user decision on Flipper
 
 
-def send_to_bridge(tool: str, detail: str) -> dict:
+def send_to_bridge(tool: str, detail: str, command: str = "") -> dict:
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(TIMEOUT)
     s.connect(SOCKET_PATH)
-    msg = json.dumps({"action": "permission_request", "tool": tool, "detail": detail})
+    payload = {"action": "permission_request", "tool": tool, "detail": detail}
+    if command:
+        # Raw command, for the bridge to use if the Flipper's "Prompt:" setting
+        # asks for it. Bounded so a pathological command can't bloat the socket
+        # message; the bridge trims to the device's 63-byte display anyway.
+        payload["command"] = command[:512]
+    msg = json.dumps(payload)
     s.sendall(msg.encode())
     s.shutdown(socket.SHUT_WR)
     resp = s.recv(4096)
@@ -28,38 +33,6 @@ def send_to_bridge(tool: str, detail: str) -> dict:
 # limits are duplicated rather than imported.
 DETAIL_MAX = 63
 TOOL_MAX = 21
-
-
-# What to show for Bash prompts: "description" (default), "command", or "both".
-#
-# Description wins by default because commands are usually front-loaded with
-# boilerplate — most agent-issued commands begin with a long `cd "/path" &&`,
-# which is exactly the part that survives truncation and tells you nothing:
-#
-#   |cd "/Users/tonyjoy/D|
-#   |ocuments/Claude     |
-#   |Projects/flipper-   |
-#
-# "command" mode is available for anyone who wants ground truth over summary —
-# a description is prose written alongside the call and can describe something
-# other than what runs. Both modes strip the boilerplate prefix first.
-DETAIL_MODE = (
-    os.environ.get("CLAUDE_PLUGIN_OPTION_permissionDetail")
-    or os.environ.get("FLIPPER_PERM_DETAIL")
-    or "description"
-).strip().lower()
-
-# Leading `cd <path> &&`, repeated, plus leading VAR=value assignments.
-_NOISE_RE = re.compile(
-    r'^\s*(?:cd\s+(?:"[^"]*"|\'[^\']*\'|[^\s&;|]+)\s*&&\s*|[A-Za-z_][A-Za-z0-9_]*=\S*\s+)+'
-)
-
-
-def _strip_noise(cmd: str) -> str:
-    """Drop `cd …&&` / env-assignment prefixes that would eat the whole display."""
-    stripped = _NOISE_RE.sub("", cmd, count=1)
-    # If stripping left nothing meaningful, the prefix *was* the command.
-    return stripped if stripped.strip() else cmd
 
 
 def _fit(text: str) -> str:
@@ -89,14 +62,13 @@ def extract_detail(tool_name: str, tool_input: dict) -> str:
             # e.g. mcp__atlassian__searchJiraIssuesUsingJql
             return _fit(parts[-1])
     if tool_name == "Bash":
+        # Return the description only. The command travels alongside it in the
+        # payload and the BRIDGE chooses between them, because the preference
+        # lives on the Flipper (Menu -> "Prompt: …") and only the bridge is
+        # told about it. Falling back to the command keeps prompts useful when
+        # a call arrives without a description.
         desc = str(tool_input.get("description", "")).strip()
-        cmd = _strip_noise(str(tool_input.get("command", ""))).strip()
-        if DETAIL_MODE == "command":
-            return _fit(cmd or desc)
-        if DETAIL_MODE == "both" and desc and cmd:
-            # Description first so it survives truncation; command fills the rest.
-            return _fit(f"{desc}: {cmd}")
-        return _fit(desc or cmd)
+        return _fit(desc or tool_input.get("command", ""))
     if tool_name in ("Edit", "Write", "Read"):
         path = str(tool_input.get("file_path", ""))
         if not path:
@@ -149,9 +121,10 @@ def main():
         tool_name = tool_name_raw
 
     detail = extract_detail(tool_name_raw, tool_input)
+    command = tool_input.get("command", "") if tool_name_raw == "Bash" else ""
 
     try:
-        result = send_to_bridge(tool_name, detail)
+        result = send_to_bridge(tool_name, detail, command)
     except Exception:
         # Bridge error — fall back to normal permission dialog
         sys.exit(1)

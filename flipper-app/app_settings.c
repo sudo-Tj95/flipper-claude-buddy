@@ -13,9 +13,9 @@
 #define SETTINGS_FILE   "/ext/apps_data/claude_buddy/settings.bin"
 
 /* V1 was just [version, ble_mode].  V2 adds owner_name + device_name.
- * V1 readers continue to work when we read a V2 file (they only look
- * at bytes 0-1); V2 readers upgrade V1 files by defaulting new fields. */
-#define SETTINGS_VERSION 2
+ * V3 appends perm_detail_mode.  Each version reads the ones before it and
+ * defaults the fields they lack, so upgrading never loses settings. */
+#define SETTINGS_VERSION 3
 
 typedef struct __attribute__((packed)) {
     uint8_t version;
@@ -23,12 +23,20 @@ typedef struct __attribute__((packed)) {
     /* NUL-terminated within the allotted buffer; unused tail bytes zero. */
     char owner_name[APP_SETTINGS_NAME_MAX];
     char device_name[APP_SETTINGS_DEVNAME_MAX];
+    /* V3+ */
+    uint8_t perm_detail_mode;
 } AppSettingsFile;
+
+/* Byte length of a V2 file — used to read V2 into the V3 struct without
+ * touching the trailing field. */
+#define SETTINGS_V2_SIZE \
+    (2u + (unsigned)APP_SETTINGS_NAME_MAX + (unsigned)APP_SETTINGS_DEVNAME_MAX)
 
 static void zero_out(AppSettingsFile* s) {
     memset(s, 0, sizeof(*s));
     s->version = SETTINGS_VERSION;
     s->ble_mode = (uint8_t)BleModeBridge;
+    s->perm_detail_mode = (uint8_t)PermDetailDescription;
 }
 
 static void read_all(AppSettingsFile* out) {
@@ -45,11 +53,16 @@ static void read_all(AppSettingsFile* out) {
                 if(storage_file_read(f, &mode, 1) == 1 && mode <= BleModeDesktop) {
                     out->ble_mode = mode;
                 }
-            } else if(ver == 2) {
-                /* Rewind to the start and read the full struct. */
+            } else if(ver == 2 || ver == 3) {
+                /* Rewind to the start and read the full struct. A V2 file is
+                 * shorter, so the read stops before perm_detail_mode and it
+                 * keeps the default set by zero_out(). */
                 storage_file_seek(f, 0, true);
-                storage_file_read(f, out, sizeof(*out));
+                storage_file_read(
+                    f, out, (ver == 2) ? SETTINGS_V2_SIZE : (uint16_t)sizeof(*out));
                 if(out->ble_mode > BleModeDesktop) out->ble_mode = BleModeBridge;
+                if(out->perm_detail_mode > PermDetailBoth)
+                    out->perm_detail_mode = (uint8_t)PermDetailDescription;
                 out->owner_name[APP_SETTINGS_NAME_MAX - 1] = '\0';
                 out->device_name[APP_SETTINGS_DEVNAME_MAX - 1] = '\0';
             }
@@ -93,6 +106,38 @@ bool app_settings_set_ble_mode(BleMode mode) {
     s.version = SETTINGS_VERSION;
     write_all(&s);
     return true;
+}
+
+PermDetailMode app_settings_get_perm_detail(void) {
+    AppSettingsFile s;
+    read_all(&s);
+    return (PermDetailMode)s.perm_detail_mode;
+}
+
+bool app_settings_set_perm_detail(PermDetailMode mode) {
+    if(mode > PermDetailBoth) mode = PermDetailDescription;
+    AppSettingsFile s;
+    read_all(&s);
+    s.perm_detail_mode = (uint8_t)mode;
+    s.version = SETTINGS_VERSION;
+    write_all(&s);
+    return true;
+}
+
+const char* app_settings_perm_detail_token(PermDetailMode mode) {
+    switch(mode) {
+    case PermDetailCommand: return "command";
+    case PermDetailBoth:    return "both";
+    default:                return "description";
+    }
+}
+
+const char* app_settings_perm_detail_label(PermDetailMode mode) {
+    switch(mode) {
+    case PermDetailCommand: return "Prompt: Command";
+    case PermDetailBoth:    return "Prompt: Desc+Cmd";
+    default:                return "Prompt: Description";
+    }
 }
 
 bool app_settings_get_owner_name(char* out, int out_size) {

@@ -78,6 +78,13 @@ if [ -n "${CLAUDE_PLUGIN_OPTION_bluetoothAddress:-}" ]; then
     export FLIPPER_BT_ADDRESS="$CLAUDE_PLUGIN_OPTION_bluetoothAddress"
 fi
 
+# Forward plugin userConfig permissionDetail. This is only a fallback: the
+# Flipper reports its own preference via hello/pref and that overrides this as
+# soon as it connects. It matters only for a .fap too old to report one.
+if [ -n "${CLAUDE_PLUGIN_OPTION_permissionDetail:-}" ]; then
+    export FLIPPER_PERM_DETAIL="$CLAUDE_PLUGIN_OPTION_permissionDetail"
+fi
+
 # Forward plugin userConfig vscodeFocusHotkey — read by session-target.py below
 # when Claude Code is running as the VS Code extension rather than in a terminal.
 if [ -n "${CLAUDE_PLUGIN_OPTION_vscodeFocusHotkey:-}" ]; then

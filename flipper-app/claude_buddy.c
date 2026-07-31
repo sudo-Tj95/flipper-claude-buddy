@@ -826,6 +826,19 @@ static void on_ui_event(UiEventType event, const char* data, void* context) {
         transport_send(app->transport, app->tx_buf, len);
         break;
 
+    case UiEventPermDetailMode: {
+        /* UI already persisted the new value. The host bridge formats the
+         * permission detail, so it needs telling; hello carries the same
+         * field for the connect-time case. Harmless if the host is an older
+         * build — it ignores unknown message types. */
+        app_notify(app, SoundCmd);
+        len = protocol_build_pref(
+            app->tx_buf, sizeof(app->tx_buf),
+            app_settings_perm_detail_token(app_settings_get_perm_detail()));
+        transport_send(app->transport, app->tx_buf, len);
+        break;
+    }
+
     case UiEventToggleBleMode: {
         /* UI already persisted the new setting. Desktop mode always runs
          * on BLE (USB is irrelevant there); Bridge mode picks transport

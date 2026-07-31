@@ -71,6 +71,9 @@ bool protocol_parse(const char* json_line, ProtocolMessage* msg);
 
 // Build outgoing JSON messages into buf. Returns bytes written.
 int protocol_build_hello(char* buf, int buf_size);
+/* Push a changed preference to the host bridge. `perm_detail` is one of
+ * "description" | "command" | "both" (see app_settings_perm_detail_token). */
+int protocol_build_pref(char* buf, int buf_size, const char* perm_detail);
 int protocol_build_cmd(char* buf, int buf_size, const char* text);
 int protocol_build_enter(char* buf, int buf_size);
 int protocol_build_esc(char* buf, int buf_size);

@@ -1,7 +1,7 @@
 {
   "name": "flipper-claude-buddy",
   "description": "Flipper Zero as a physical remote control and feedback device for Claude Code. Provides sound, vibration, and display feedback on a Flipper Zero connected via USB.",
-  "version": "0.6.5",
+  "version": "0.7.0",
   "author": {
     "name": "jxw1102"
   },
@@ -42,7 +42,7 @@
     "permissionDetail": {
       "title": "Permission Detail",
       "type": "string",
-      "description": "What Bash permission prompts show on the Flipper: 'description' (default, human-readable summary), 'command' (the actual command, with `cd …&&` boilerplate stripped), or 'both' (description first, command filling the remaining space).",
+      "description": "FALLBACK ONLY — set this on the Flipper instead (Menu → 'Prompt: …', long-press RIGHT). The device's setting always wins; this is used only when running a .fap too old to report one. Values: 'description' (default), 'command', 'both'.",
       "sensitive": false
     },
     "vscodeFocusHotkey": {

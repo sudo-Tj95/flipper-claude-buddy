@@ -64,6 +64,26 @@ Two related changes:
 
 This needs no firmware change — the device could always display it.
 
+#### Choosing what prompts show — on the device
+
+Long-press **RIGHT** → menu → **"Prompt: …"**. Pressing OK cycles it:
+
+```
+Prompt: Description   (default)
+Prompt: Command
+Prompt: Desc+Cmd
+```
+
+The setting is persisted on the Flipper (settings V3) and pushed to the host —
+on `hello` at connect, and via a `pref` message when you change it mid-session —
+because the bridge is what formats the text. So the choice belongs to whoever is
+holding the device and about to approve something, and it survives restarts and
+plugin reinstalls. The row is hidden in Claude Desktop mode, which carries its
+own prompt text and does not involve the bridge.
+
+The `permissionDetail` plugin option remains as a fallback for a `.fap` too old
+to report a preference; the device always wins when it reports one.
+
 #### Why `description` is the default
 
 Showing the raw command looks like the safer choice — a description is prose

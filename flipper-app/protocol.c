@@ -1,4 +1,5 @@
 #include "protocol.h"
+#include "app_settings.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -128,10 +129,23 @@ static int build_simple(char* buf, int buf_size, const char* type) {
 int protocol_build_hello(char* buf, int buf_size) {
     if(!buf || buf_size <= 0) return 0;
     const char* pet = furi_hal_version_get_name_ptr();
+    /* perm_detail rides along on hello so the host knows the preference from
+     * the first prompt onward, with no extra round trip.  Runtime changes go
+     * out separately via protocol_build_pref(). */
     return snprintf(
         buf, buf_size,
-        "{\"v\":1,\"t\":\"hello\",\"d\":{\"fw\":\"0.1.0\",\"bt\":\"%s\"}}\n",
-        pet ? pet : "");
+        "{\"v\":1,\"t\":\"hello\",\"d\":{\"fw\":\"0.1.0\",\"bt\":\"%s\","
+        "\"perm_detail\":\"%s\"}}\n",
+        pet ? pet : "",
+        app_settings_perm_detail_token(app_settings_get_perm_detail()));
+}
+
+int protocol_build_pref(char* buf, int buf_size, const char* perm_detail) {
+    if(!buf || buf_size <= 0) return 0;
+    return snprintf(
+        buf, buf_size,
+        "{\"v\":1,\"t\":\"pref\",\"d\":{\"perm_detail\":\"%s\"}}\n",
+        perm_detail ? perm_detail : "description");
 }
 
 int protocol_build_cmd(char* buf, int buf_size, const char* text) {

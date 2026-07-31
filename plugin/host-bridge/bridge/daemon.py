@@ -27,6 +27,12 @@ class Daemon:
         self._perm_future: asyncio.Future | None = None
         self._menu_sent = False
         self._cmd_map: dict[str, str] = {}  # truncated -> full command
+        # What Bash permission prompts show: set on the Flipper (Menu ->
+        # "Prompt: …"), delivered via `hello` at connect and `pref` on change.
+        # The env var is a fallback for an older .fap that sends neither.
+        self._perm_detail_mode: str = (
+            os.environ.get("FLIPPER_PERM_DETAIL", "").strip().lower() or "description"
+        )
         self._space_repeat_task: asyncio.Task | None = None
         self._session_targets: OrderedDict[str, dict[str, str]] = OrderedDict()
 
@@ -42,6 +48,7 @@ class Daemon:
         if msg_type == "hello":
             bt_name = data.get("bt", "")
             log.info("Flipper connected: fw=%s bt=%s", data.get("fw", "?"), bt_name or "?")
+            self._set_perm_detail_mode(data.get("perm_detail"))
             if bt_name and config.BT_NAME_CACHE:
                 try:
                     with open(config.BT_NAME_CACHE, "w") as f:
@@ -169,6 +176,10 @@ class Daemon:
             if esc:
                 await self._send_keystroke("escape")
 
+        elif msg_type == "pref":
+            # Preference changed on the device while connected.
+            self._set_perm_detail_mode(data.get("perm_detail"))
+
         elif msg_type == "pong":
             if not self._menu_sent:
                 log.info("First pong — sending initial state")
@@ -180,6 +191,20 @@ class Daemon:
                     await self.serial.send(menu_bytes)
                 if self._claude_connected:
                     await self.serial.send(protocol.state_msg(True))
+
+    VALID_PERM_DETAIL_MODES = ("description", "command", "both")
+
+    def _set_perm_detail_mode(self, value) -> None:
+        """Adopt a perm_detail preference reported by the Flipper."""
+        if not value:
+            return  # older .fap that doesn't report it — keep the current mode
+        mode = str(value).strip().lower()
+        if mode not in self.VALID_PERM_DETAIL_MODES:
+            log.warning("Ignoring unknown perm_detail %r from Flipper", value)
+            return
+        if mode != self._perm_detail_mode:
+            log.info("Permission detail mode: %s (was %s)", mode, self._perm_detail_mode)
+        self._perm_detail_mode = mode
 
     async def _handle_ipc_action(self, request: dict) -> dict:
         action = request.get("action", "")
@@ -233,8 +258,18 @@ class Daemon:
 
         elif action == "permission_request":
             tool = request.get("tool", "Tool")[:protocol.PERM_TOOL_MAX]
-            detail = request.get("detail", "")[:protocol.PERM_DETAIL_MAX]
-            log.info("Permission request: %s %s", tool, detail)
+            # The hook sends the raw materials; the bridge picks between them,
+            # because only the bridge knows the Flipper's current preference.
+            # `detail` alone (no `command`) means a non-Bash tool, or an older
+            # hook that already decided — either way it passes through.
+            command = request.get("command", "")
+            if command:
+                detail = protocol.format_perm_detail(
+                    request.get("detail", ""), command, self._perm_detail_mode
+                )
+            else:
+                detail = protocol.fit_detail(request.get("detail", ""))
+            log.info("Permission request: %s %s [%s]", tool, detail, self._perm_detail_mode)
 
             if self._perm_future and not self._perm_future.done():
                 log.info("Permission busy, rejecting")

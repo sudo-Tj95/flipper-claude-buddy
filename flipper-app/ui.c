@@ -773,24 +773,29 @@ static bool menu_input(InputEvent* event, void* context) {
 
 // ── Info View ────────────────────────────────────────────────────
 
-#define INFO_MENU_COUNT 5
-/* Order: BLE mode toggle on top, Help just before About.  The BLE row
- * is rendered dynamically — label shows the *current* mode so user
- * sees what's active and toggles to the other. */
+#define INFO_MENU_COUNT 6
+/* Order: BLE mode toggle on top, Help just before About.  The BLE and
+ * permission-detail rows are rendered dynamically — the label shows the
+ * *current* value so the user sees what's active and OK cycles it. */
 #define INFO_IDX_BLE      0
-#define INFO_IDX_TRANS    1
-#define INFO_IDX_SHIFTTAB 2
-#define INFO_IDX_HELP     3
-#define INFO_IDX_ABOUT    4
+#define INFO_IDX_PERMTEXT 1
+#define INFO_IDX_TRANS    2
+#define INFO_IDX_SHIFTTAB 3
+#define INFO_IDX_HELP     4
+#define INFO_IDX_ABOUT    5
 static const char* info_menu_items[INFO_MENU_COUNT] = {
-    NULL /* BLE mode */, "Transcript", "Shift+Tab", "Help", "About"};
+    NULL /* BLE mode */, NULL /* perm detail */, "Transcript", "Shift+Tab", "Help",
+    "About"};
 
 /* Shift+Tab is a Bridge-only action (the Flipper asks the host to send a
  * Shift+Tab keystroke into the active shell); in Desktop mode there is no
- * keystroke path, so hide the entry entirely. */
+ * keystroke path, so hide the entry entirely.  The permission-detail row is
+ * likewise Bridge-only: Desktop's protocol carries its own prompt text, and
+ * the host bridge — which does the formatting — is not in that loop. */
 static bool info_menu_item_visible(int idx) {
-    if(idx == INFO_IDX_SHIFTTAB && app_settings_get_ble_mode() == BleModeDesktop)
-        return false;
+    bool desktop = app_settings_get_ble_mode() == BleModeDesktop;
+    if(idx == INFO_IDX_SHIFTTAB && desktop) return false;
+    if(idx == INFO_IDX_PERMTEXT && desktop) return false;
     return true;
 }
 
@@ -813,7 +818,7 @@ static int info_menu_step(int from, int delta) {
  * only adds the no-always-allow / VS Code / BLE-matching changes. */
 static const char* about_lines[] = {
     "Claude Buddy",
-    "v0.6.4 (fork)",
+    "v0.7.0 (fork)",
     "Claude Code companion",
     "by jxw1102",
     "github.com/jxw1102",
@@ -952,6 +957,8 @@ static void info_draw(Canvas* canvas, void* model) {
                 label = (app_settings_get_ble_mode() == BleModeDesktop)
                             ? "Claude Desktop (BLE)"
                             : "Claude Code (USB/BLE)";
+            } else if(i == INFO_IDX_PERMTEXT) {
+                label = app_settings_perm_detail_label(app_settings_get_perm_detail());
             }
             canvas_set_font(canvas, FontSecondary);
             if(i == m->index) {
@@ -1154,17 +1161,31 @@ static bool info_input(InputEvent* event, void* context) {
                     ui->event_callback(UiEventToggleBleMode, NULL, ui->event_context);
                 return true;
             }
+            if(m->index == INFO_IDX_PERMTEXT) {
+                /* Cycle Description -> Command -> Both -> Description. */
+                PermDetailMode cur = app_settings_get_perm_detail();
+                PermDetailMode next =
+                    (cur == PermDetailDescription) ? PermDetailCommand :
+                    (cur == PermDetailCommand)     ? PermDetailBoth :
+                                                     PermDetailDescription;
+                app_settings_set_perm_detail(next);
+                view_commit_model(ui->info_view, true);
+                /* The host formats the detail, so it has to be told. */
+                if(ui->event_callback)
+                    ui->event_callback(UiEventPermDetailMode, NULL, ui->event_context);
+                return true;
+            }
             if(m->index == INFO_IDX_SHIFTTAB) {
                 view_commit_model(ui->info_view, false);
                 if(ui->event_callback)
                     ui->event_callback(UiEventShiftTab, NULL, ui->event_context);
                 return true;
             }
-            /* Map remaining entries to their sub-pages.  BLE (0) and
-             * Shift+Tab (2) are handled above; their entries here are
-             * placeholders. */
+            /* Map remaining entries to their sub-pages.  BLE (0), perm
+             * detail (1) and Shift+Tab (3) are handled above; their entries
+             * here are placeholders. */
             const InfoPage pages[INFO_MENU_COUNT] = {
-                0, InfoPageTranscript, 0, InfoPageHelp, InfoPageAbout};
+                0, 0, InfoPageTranscript, 0, InfoPageHelp, InfoPageAbout};
             m->page = pages[m->index];
             m->scroll = 0;
             m->h_scroll = 0;
